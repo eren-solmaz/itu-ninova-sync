@@ -301,7 +301,8 @@ for madde in ders_maddeleri:
         link_el = madde.find_element(By.CSS_SELECTOR, "ul li a")
         link = link_el.get_attribute("href")
         donem = link_el.text
-        full_name = f"{kod} - {donem}"
+        #full_name = f"{kod} - {donem}"
+        full_name = kod
         if link: hedef_dersler.append((full_name, link))
         print(f"Listeye eklendi: {full_name}")
     except: continue
