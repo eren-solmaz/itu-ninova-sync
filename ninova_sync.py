@@ -87,35 +87,80 @@ def arsivle(local_path, neden):
 def dosya_senkronize_et(url, session, folder_path, varsayilan_isim, remote_date_str, indent_level):
     indent_str = "│   " * indent_level
     filename = None
+    is_weblink = False
+    content_type = ""
     
     # 1. Link Kontrolü (HEAD)
     try:
         head_resp = session.head(url, allow_redirects=True, timeout=5)
         
         if head_resp.status_code >= 400:
-            print(f"{indent_str}{Renk.GRI}[i] Dış Bağlantı / Erişilemiyor (Atlandı): {varsayilan_isim}{Renk.RESET}")
-            return None
-
-        content_type = head_resp.headers.get('content-type', '').lower()
-        if 'text/html' in content_type:
-            print(f"{indent_str}{Renk.GRI}[i] Web Bağlantısı (Atlandı): {varsayilan_isim}{Renk.RESET}")
-            return None
-
-        cd = head_resp.headers.get('content-disposition')
-        if cd:
-            fname = re.findall('filename="?([^"]+)"?', cd)
-            if fname:
-                try:
-                    filename = fname[0].encode('iso-8859-1').decode('utf-8')
-                except:
-                    filename = fname[0]
+            is_weblink = True
+        else:
+            content_type = head_resp.headers.get('content-type', '').lower()
+            if 'text/html' in content_type:
+                is_weblink = True
+            else:
+                cd = head_resp.headers.get('content-disposition')
+                if cd:
+                    fname = re.findall('filename="?([^"]+)"?', cd)
+                    if fname:
+                        try:
+                            filename = fname[0].encode('iso-8859-1').decode('utf-8')
+                        except:
+                            filename = fname[0]
         
     except requests.exceptions.RequestException:
-        print(f"{indent_str}{Renk.GRI}[i] Bağlantı Hatası / Dış Link (Atlandı): {varsayilan_isim}{Renk.RESET}")
-        return None
+        is_weblink = True
     except Exception:
-        pass
+        is_weblink = True
 
+    # Eğer web bağlantısı ise .url kısayol dosyası olarak kaydet
+    if is_weblink:
+        filename = temizle_dosya_ismi(varsayilan_isim) + ".url"
+        full_path = os.path.join(folder_path, filename)
+        rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
+        rapor_yolu = rel_path_key
+
+        try:
+            dosya_indirilmeli = False
+            durum = ""
+
+            if not os.path.exists(full_path):
+                dosya_indirilmeli = True
+                durum = "YENİ"
+            else:
+                local_stored_date = files_metadata.get(rel_path_key)
+                if local_stored_date != remote_date_str:
+                    print(f"{indent_str}{Renk.SARI}[!] WEB LİNK GÜNCELLENDİ: {varsayilan_isim}{Renk.RESET}")
+                    arsivle(full_path, "Changed")
+                    dosya_indirilmeli = True
+                    durum = "GÜNCEL"
+                else:
+                    print(f"{indent_str}{Renk.GRI}[.] Web Link Güncel: {varsayilan_isim} ({remote_date_str}){Renk.RESET}")
+                    return filename
+
+            if dosya_indirilmeli:
+                if durum == "YENİ":
+                    print(f"{indent_str}{Renk.YESIL}[🌐] YENİ WEB LİNK: {varsayilan_isim}{Renk.RESET}")
+                
+                url_icerigi = f"[InternetShortcut]\nURL={url}\n"
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    f.write(url_icerigi)
+                
+                files_metadata[rel_path_key] = remote_date_str
+                save_metadata()
+
+                if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
+                elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
+            
+            return filename
+        except Exception as e:
+            print(f"{indent_str}{Renk.KIRMIZI}[HATA] Web link kaydedilemedi: {e}{Renk.RESET}")
+            ozet["hata"].append(f"{folder_path}/{varsayilan_isim}: {e}")
+            return None
+
+    # Normal dosya indirme mantığı (PDF, PPTX vb.)
     if not filename:
         filename = varsayilan_isim
         if "." not in filename: 
@@ -151,8 +196,18 @@ def dosya_senkronize_et(url, session, folder_path, varsayilan_isim, remote_date_
             
             response = session.get(url, stream=True, timeout=20)
             if 'text/html' in response.headers.get('content-type', '').lower():
-                print(f"{indent_str}{Renk.GRI}[i] İndirme iptal (Web Sayfası): {filename}{Renk.RESET}")
-                return None
+                # GET isteğinde beklenmedik şekilde HTML gelirse web link olarak kaydet
+                url_icerigi = f"[InternetShortcut]\nURL={url}\n"
+                weblink_filename = temizle_dosya_ismi(varsayilan_isim) + ".url"
+                weblink_full_path = os.path.join(folder_path, weblink_filename)
+                with open(weblink_full_path, 'w', encoding='utf-8') as f:
+                    f.write(url_icerigi)
+                print(f"{indent_str}{Renk.YESIL}[🌐] WEB LİNK OLARAK KAYDEDİLDİ: {varsayilan_isim}{Renk.RESET}")
+                files_metadata[rel_path_key] = remote_date_str
+                save_metadata()
+                if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
+                elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
+                return weblink_filename
 
             with open(full_path, 'wb') as f:
                 for chunk in response.iter_content(1024):
@@ -275,7 +330,6 @@ try:
     print(f"\n{Renk.SARI}⏳ Lütfen tarayıcı üzerinden 60 saniye içinde giriş yapın...{Renk.RESET}")
     print(f"{Renk.GRI}(Giriş yaptıktan sonra ders menüsü yüklenene kadar bekleniyor){Renk.RESET}\n")
     
-    # Kullanıcının manuel giriş yapıp menüye ulaşmasını (menuErisimAgaci elemanının görünmesini) 60 sn boyunca bekler
     WebDriverWait(driver, 60).until(
         EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci"))
     )
@@ -301,7 +355,6 @@ for madde in ders_maddeleri:
         link_el = madde.find_element(By.CSS_SELECTOR, "ul li a")
         link = link_el.get_attribute("href")
         donem = link_el.text
-        #full_name = f"{kod} - {donem}"
         full_name = kod
         if link: hedef_dersler.append((full_name, link))
         print(f"Listeye eklendi: {full_name}")
@@ -338,15 +391,15 @@ else:
     ozet["silinen"].sort()
 
     if ozet["yeni"]:
-        print(f"\n{Renk.YESIL}[+] YENİ EKLENEN DOSYALAR ({len(ozet['yeni'])}):{Renk.RESET}")
+        print(f"\n{Renk.YESIL}[+] YENİ EKLENEN DOSYALAR / LİNKLER ({len(ozet['yeni'])}):{Renk.RESET}")
         for f in ozet["yeni"]: print(f"  📂 {f}")
 
     if ozet["degisen"]:
-        print(f"\n{Renk.SARI}[!] TARİHİ DEĞİŞEN (GÜNCELLENEN) DOSYALAR ({len(ozet['degisen'])}):{Renk.RESET}")
+        print(f"\n{Renk.SARI}[!] TARİHİ DEĞİŞEN (GÜNCELLENEN) DOSYALAR / LİNKLER ({len(ozet['degisen'])}):{Renk.RESET}")
         for f in ozet["degisen"]: print(f"  📝 {f}")
 
     if ozet["silinen"]:
-        print(f"\n{Renk.KIRMIZI}[-] SİLİNEN DOSYALAR ({len(ozet['silinen'])}):{Renk.RESET}")
+        print(f"\n{Renk.KIRMIZI}[-] SİLİNEN DOSYALAR / LİNKLER ({len(ozet['silinen'])}):{Renk.RESET}")
         for f in ozet["silinen"]: print(f"  🗑️  {f}")
         
     if ozet["hata"]:
