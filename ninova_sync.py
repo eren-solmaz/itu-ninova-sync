@@ -5,7 +5,6 @@ import json
 import requests
 import re
 import shutil
-from getpass import getpass
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -32,7 +31,7 @@ ANA_KLASOR = "ITU_Dersleri"
 ARSIV_KLASOR = os.path.join(ANA_KLASOR, "_ARSIV")
 URL = "https://ninova.itu.edu.tr/tr/"
 METADATA_FILE = "dosya_takip.json"
-isHeadless = True
+isHeadless = False
 
 # --- ÖZET RAPOR LİSTELERİ ---
 ozet = {
@@ -60,30 +59,6 @@ def save_metadata():
     except Exception as e:
         print(f"{Renk.KIRMIZI}Metadata kaydedilemedi: {e}{Renk.RESET}")
 
-# --- 1. KİMLİK BİLGİLERİ ---
-credentials_file = "credentials.json"
-
-if not os.path.exists(credentials_file):
-    print(f"{Renk.SARI}--------------------------------------------------{Renk.RESET}")
-    print(f"{Renk.KALIN}🚀 Sisteme ilk defa giriş yapıyorsunuz.{Renk.RESET}")
-    new_username = input(f"{Renk.MAVI}{Renk.KALIN}👉 Kullanıcı Adı: {Renk.RESET}")
-    new_password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
-    
-    creds_data = {"username": new_username, "password": new_password}
-    with open(credentials_file, "w", encoding="utf-8") as f:
-        json.dump(creds_data, f, indent=4, ensure_ascii=False)
-    print(f"\n{Renk.YESIL}✅ Bilgiler kaydedildi.{Renk.RESET}\n")
-
-try:
-    with open(credentials_file, "r", encoding="utf-8") as f:
-        creds = json.load(f)
-    my_username = creds["username"]
-    my_password = creds["password"]
-    print(f"{Renk.YESIL}Bilgiler yüklendi: {Renk.KALIN}{my_username}{Renk.RESET}")
-except Exception as e:
-    print(f"{Renk.KIRMIZI}HATA: Dosya okunurken sorun oluştu: {e}{Renk.RESET}")
-    sys.exit(1)
-
 # --- YARDIMCI FONKSİYONLAR ---
 
 def temizle_dosya_ismi(isim):
@@ -105,16 +80,11 @@ def arsivle(local_path, neden):
 
         os.makedirs(target_dir, exist_ok=True)
         shutil.move(local_path, target_path)
-        # print(f"{Renk.SARI}    -> [ARŞİVLENDİ] {yeni_isim}{Renk.RESET}") # Artık ana fonksiyonda basılıyor
         return True
     except Exception as e:
         return False
 
 def dosya_senkronize_et(url, session, folder_path, varsayilan_isim, remote_date_str, indent_level):
-    """
-    remote_date_str: Ninova'daki tarih (Örn: '16 Şubat 2025 22:08')
-    indent_level: Görsel girinti seviyesi (0, 1, 2...)
-    """
     indent_str = "│   " * indent_level
     filename = None
     
@@ -263,28 +233,24 @@ def klasor_tarama(driver, session, local_path, indent_level=0):
         except: 
             continue
 
-    # İterasyon
     for item in items:
         if item["type"] == "folder":
-            # Klasör Başlığı
             print(f"{indent_str}{Renk.MAVI}📂 [{item['name']}]{Renk.RESET}")
             
             new_path = os.path.join(local_path, temizle_dosya_ismi(item['name']))
             driver.get(item["url"])
             
-            # RECURSIVE ÇAĞRI (Derinliği 1 artırıyoruz)
             klasor_tarama(driver, session, new_path, indent_level + 1)
             
             driver.back()
         else:
-            # Dosya (Mevcut derinlik seviyesi ile)
             saved_name = dosya_senkronize_et(
                 item["url"], 
                 session, 
                 local_path, 
                 item["name"], 
                 item["date"],
-                indent_level # Girinti seviyesini gönder
+                indent_level 
             )
             if saved_name: found_files.append(saved_name)
 
@@ -304,27 +270,19 @@ print(f"{Renk.KALIN}🚀 Chrome başlatılıyor...{Renk.RESET}")
 driver = webdriver.Chrome(options=options)
 driver.get(URL)
 
-# --- LOGIN ---
+# --- MANUEL GİRİŞ BEKLEME (60 SANİYE) ---
 try:
-    print("Giriş yapılıyor...")
-    WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, "oturumAc"))).click()
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbUserName"))).send_keys(my_username)
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbPassword"))).send_keys(my_password)
-    WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "ContentPlaceHolder1_btnLogin"))).click()
-
-    try:
-        hata_elementi = WebDriverWait(driver, 3).until(EC.visibility_of_element_located((By.ID, "ContentPlaceHolder1_lbHata")))
-        if hata_elementi.text.strip():
-            print(f"\n{Renk.KIRMIZI}⛔ GİRİŞ BAŞARISIZ!{Renk.RESET}")
-            driver.quit()
-            sys.exit(1)
-    except: pass
-
-    WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci")))
-    print(f"{Renk.YESIL}✅ Giriş Başarılı!{Renk.RESET}")
+    print(f"\n{Renk.SARI}⏳ Lütfen tarayıcı üzerinden 60 saniye içinde giriş yapın...{Renk.RESET}")
+    print(f"{Renk.GRI}(Giriş yaptıktan sonra ders menüsü yüklenene kadar bekleniyor){Renk.RESET}\n")
+    
+    # Kullanıcının manuel giriş yapıp menüye ulaşmasını (menuErisimAgaci elemanının görünmesini) 60 sn boyunca bekler
+    WebDriverWait(driver, 60).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci"))
+    )
+    print(f"{Renk.YESIL}✅ Giriş Algılandı ve Başarılı!{Renk.RESET}")
 
 except Exception as e:
-    print(f"\n{Renk.KIRMIZI}❌ Giriş Hatası: {e}{Renk.RESET}")
+    print(f"\n{Renk.KIRMIZI}❌ 60 saniye içinde giriş yapılamadı veya zaman aşımına uğradı. Program sonlandırılıyor.{Renk.RESET}")
     driver.quit()
     sys.exit(1)
 
@@ -362,7 +320,6 @@ for ders_adi, ders_link in hedef_dersler:
     for mod in moduller:
         driver.get(ders_link.rstrip('/') + mod)
         if "bulunamadı" not in driver.title.lower():
-            # Başlangıç derinliği 0
             klasor_tarama(driver, session, os.path.join(base_path, mod.replace("/","")), indent_level=0)
 
 driver.quit()
