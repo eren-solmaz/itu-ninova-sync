@@ -5,6 +5,7 @@ import json
 import requests
 import re
 import shutil
+from getpass import getpass
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -58,6 +59,30 @@ def save_metadata():
             json.dump(files_metadata, f, indent=4, ensure_ascii=False)
     except Exception as e:
         print(f"{Renk.KIRMIZI}Metadata kaydedilemedi: {e}{Renk.RESET}")
+
+# --- 1. KİMLİK BİLGİLERİ (OTOMASYON) ---
+credentials_file = "credentials.json"
+
+if not os.path.exists(credentials_file):
+    print(f"{Renk.SARI}--------------------------------------------------{Renk.RESET}")
+    print(f"{Renk.KALIN}🚀 Sisteme ilk defa giriş yapıyorsunuz.{Renk.RESET}")
+    new_username = input(f"{Renk.MAVI}{Renk.KALIN}👉 Kullanıcı Adı: {Renk.RESET}")
+    new_password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
+    
+    creds_data = {"username": new_username, "password": new_password}
+    with open(credentials_file, "w", encoding="utf-8") as f:
+        json.dump(creds_data, f, indent=4, ensure_ascii=False)
+    print(f"\n{Renk.YESIL}✅ Bilgiler kaydedildi.{Renk.RESET}\n")
+
+try:
+    with open(credentials_file, "r", encoding="utf-8") as f:
+        creds = json.load(f)
+    my_username = creds["username"]
+    my_password = creds["password"]
+    print(f"{Renk.YESIL}Bilgiler yüklendi: {Renk.KALIN}{my_username}{Renk.RESET}")
+except Exception as e:
+    print(f"{Renk.KIRMIZI}HATA: Dosya okunurken sorun oluştu: {e}{Renk.RESET}")
+    sys.exit(1)
 
 # --- YARDIMCI FONKSİYONLAR ---
 
@@ -325,18 +350,27 @@ print(f"{Renk.KALIN}🚀 Chrome başlatılıyor...{Renk.RESET}")
 driver = webdriver.Chrome(options=options)
 driver.get(URL)
 
-# --- MANUEL GİRİŞ BEKLEME (60 SANİYE) ---
+# --- OTOMATİK GİRİŞ (LOGIN) ---
 try:
-    print(f"\n{Renk.SARI}⏳ Lütfen tarayıcı üzerinden 60 saniye içinde giriş yapın...{Renk.RESET}")
-    print(f"{Renk.GRI}(Giriş yaptıktan sonra ders menüsü yüklenene kadar bekleniyor){Renk.RESET}\n")
-    
-    WebDriverWait(driver, 60).until(
-        EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci"))
-    )
-    print(f"{Renk.YESIL}✅ Giriş Algılandı ve Başarılı!{Renk.RESET}")
+    print("Giriş yapılıyor...")
+    WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, "oturumAc"))).click()
+    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbUserName"))).send_keys(my_username)
+    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbPassword"))).send_keys(my_password)
+    WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "ContentPlaceHolder1_btnLogin"))).click()
+
+    try:
+        hata_elementi = WebDriverWait(driver, 3).until(EC.visibility_of_element_located((By.ID, "ContentPlaceHolder1_lbHata")))
+        if hata_elementi.text.strip():
+            print(f"\n{Renk.KIRMIZI}⛔ GİRİŞ BAŞARISIZ! Kullanıcı adı veya şifre hatalı.{Renk.RESET}")
+            driver.quit()
+            sys.exit(1)
+    except: pass
+
+    WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci")))
+    print(f"{Renk.YESIL}✅ Giriş Başarılı!{Renk.RESET}")
 
 except Exception as e:
-    print(f"\n{Renk.KIRMIZI}❌ 60 saniye içinde giriş yapılamadı veya zaman aşımına uğradı. Program sonlandırılıyor.{Renk.RESET}")
+    print(f"\n{Renk.KIRMIZI}❌ Giriş Hatası: {e}{Renk.RESET}")
     driver.quit()
     sys.exit(1)
 
