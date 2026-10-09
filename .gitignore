@@ -1,6 +1,7 @@
 /ITU_Dersleri
 /.vscode
 /.venv
+/venv
 
 credentials.json
 dosya_takip.json
