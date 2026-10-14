@@ -7,6 +7,7 @@ import re
 import shutil
 from getpass import getpass
 from datetime import datetime
+import keyring
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -32,6 +33,8 @@ ANA_KLASOR = "ITU_Dersleri"
 ARSIV_KLASOR = os.path.join(ANA_KLASOR, "_ARSIV")
 URL = "https://ninova.itu.edu.tr/tr/"
 METADATA_FILE = "dosya_takip.json"
+CONFIG_FILE = "config.json"
+SERVICE_NAME = "NinovaAutomation"
 isHeadless = False
 
 # --- ÖZET RAPOR LİSTELERİ ---
@@ -60,29 +63,46 @@ def save_metadata():
     except Exception as e:
         print(f"{Renk.KIRMIZI}Metadata kaydedilemedi: {e}{Renk.RESET}")
 
-# --- 1. KİMLİK BİLGİLERİ (OTOMASYON) ---
-credentials_file = "credentials.json"
+# --- 1. KİMLİK BİLGİLERİ (KEYRING ENTEGRASYONU) ---
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
-if not os.path.exists(credentials_file):
+def save_config(data):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+config = load_config()
+my_username = config.get("username")
+
+if not my_username:
     print(f"{Renk.SARI}--------------------------------------------------{Renk.RESET}")
     print(f"{Renk.KALIN}🚀 Sisteme ilk defa giriş yapıyorsunuz.{Renk.RESET}")
-    new_username = input(f"{Renk.MAVI}{Renk.KALIN}👉 Kullanıcı Adı: {Renk.RESET}")
+    my_username = input(f"{Renk.MAVI}{Renk.KALIN}👉 Kullanıcı Adı: {Renk.RESET}")
     new_password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
     
-    creds_data = {"username": new_username, "password": new_password}
-    with open(credentials_file, "w", encoding="utf-8") as f:
-        json.dump(creds_data, f, indent=4, ensure_ascii=False)
-    print(f"\n{Renk.YESIL}✅ Bilgiler kaydedildi.{Renk.RESET}\n")
+    # Şifreyi OS Keyring'e kaydet
+    keyring.set_password(SERVICE_NAME, my_username, new_password)
+    
+    # Kullanıcı adını config'e kaydet (Kullanıcı adı gizli bilgi değildir)
+    config["username"] = my_username
+    save_config(config)
+    print(f"\n{Renk.YESIL}✅ Şifreniz işletim sisteminin güvenli kasasına (Keyring) kaydedildi.{Renk.RESET}\n")
 
-try:
-    with open(credentials_file, "r", encoding="utf-8") as f:
-        creds = json.load(f)
-    my_username = creds["username"]
-    my_password = creds["password"]
-    print(f"{Renk.YESIL}Bilgiler yüklendi: {Renk.KALIN}{my_username}{Renk.RESET}")
-except Exception as e:
-    print(f"{Renk.KIRMIZI}HATA: Dosya okunurken sorun oluştu: {e}{Renk.RESET}")
-    sys.exit(1)
+# Keyring'den şifreyi güvenli bir şekilde çek
+my_password = keyring.get_password(SERVICE_NAME, my_username)
+
+if not my_password:
+    print(f"{Renk.SARI}[!] Keyring kasasında şifre bulunamadı, lütfen tekrar girin.{Renk.RESET}")
+    my_password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
+    keyring.set_password(SERVICE_NAME, my_username, my_password)
+
+print(f"{Renk.YESIL}Bilgiler yüklendi: {Renk.KALIN}{my_username}{Renk.RESET}")
 
 # --- YARDIMCI FONKSİYONLAR ---
 
