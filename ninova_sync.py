@@ -423,12 +423,81 @@ for ders_adi, ders_link in hedef_dersler:
     print(f"{Renk.KALIN}[{safe_ders_adi}]{Renk.RESET} Senkronize Ediliyor...")
     
     base_path = os.path.join(ANA_KLASOR, safe_ders_adi)
-    moduller = ["/DersDosyalari", "/SinifDosyalari"]
+    moduller = ["/DersDosyalari", "/SinifDosyalari", "/Odevler"]
 
     for mod in moduller:
         driver.get(ders_link.rstrip('/') + mod)
         if "bulunamadı" not in driver.title.lower():
-            klasor_tarama(driver, session, os.path.join(base_path, mod.replace("/","")), indent_level=0)
+            if mod == "/Odevler":
+                # --- ÖDEVLERİ TARA VE İNDİR ---
+                odev_base_path = os.path.join(base_path, "Odevler")
+                os.makedirs(odev_base_path, exist_ok=True)
+                
+                odevler_info = []
+                try:
+                    # Ana ödev listesinden başlıkları ve linkleri topla
+                    rows = driver.find_elements(By.CSS_SELECTOR, "table[id$='gvOdevListesi'] tr td")
+                    for td in rows:
+                        try:
+                            title_el = td.find_element(By.TAG_NAME, "h2")
+                            title = title_el.text.strip()
+                            
+                            links = td.find_elements(By.TAG_NAME, "a")
+                            link_url = None
+                            for a in links:
+                                href = a.get_attribute("href")
+                                if href and "/Odev/" in href:
+                                    link_url = href
+                                    break
+                            
+                            if link_url:
+                                odevler_info.append({"title": title, "url": link_url})
+                        except: continue
+                except Exception:
+                    pass
+
+                for odev in odevler_info:
+                    hw_folder = os.path.join(odev_base_path, temizle_dosya_ismi(odev["title"]))
+                    os.makedirs(hw_folder, exist_ok=True)
+                    print(f"│   {Renk.MAVI}📝 [{odev['title']}]{Renk.RESET}")
+                    
+                    driver.get(odev["url"])
+                    
+                    try:
+                        # Ödev sayfasındaki Kaynak Dosyalar tablosunu bul (gvDosyalar)
+                        table = WebDriverWait(driver, 3).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "table[id$='gvDosyalar']"))
+                        )
+                        rows = table.find_elements(By.CSS_SELECTOR, "tr")
+                        
+                        found_files = []
+                        for row in rows:
+                            cols = row.find_elements(By.TAG_NAME, "td")
+                            if len(cols) < 2: continue
+                            
+                            try:
+                                link_el = cols[0].find_element(By.TAG_NAME, "a")
+                                url = link_el.get_attribute("href")
+                                name = link_el.text.strip()
+                                
+                                date_text = "TarihYok"
+                                if len(cols) >= 3:
+                                    date_text = cols[-1].text.strip()
+                                    
+                                saved_name = dosya_senkronize_et(
+                                    url, session, hw_folder, name, date_text, indent_level=2
+                                )
+                                if saved_name: found_files.append(saved_name)
+                            except: continue
+                                
+                        silinenleri_kontrol_et(hw_folder, found_files, indent_level=2)
+                    except:
+                        # Tablo yoksa ödeve ekli dosya yoktur
+                        silinenleri_kontrol_et(hw_folder, [], indent_level=2)
+
+            else:
+                # --- NORMAL DERS VE SINIF DOSYALARINI TARA ---
+                klasor_tarama(driver, session, os.path.join(base_path, mod.replace("/","")), indent_level=0)
 
 driver.quit()
 
