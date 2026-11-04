@@ -120,7 +120,7 @@ def arsivle(local_path, neden):
         yeni_isim = f"{name}_{zaman}{ext}"
         
         rel_path = os.path.relpath(local_path, ANA_KLASOR)
-        target_dir = os.path.join(ARSIV_KLASOR, neden, os.path.dirname(os.path.relpath(local_path, ANA_KLASOR)))
+        target_dir = os.path.join(ARSIV_KLASOR, neden, os.path.dirname(rel_path))
         target_path = os.path.join(target_dir, yeni_isim)
 
         os.makedirs(target_dir, exist_ok=True)
@@ -270,6 +270,130 @@ def dosya_senkronize_et(url, session, folder_path, varsayilan_isim, remote_date_
         print(f"{indent_str}{Renk.KIRMIZI}[HATA] İndirme başarısız: {e}{Renk.RESET}")
         ozet["hata"].append(f"{folder_path}/{varsayilan_isim}: {e}")
         return None
+
+def duyurulari_tara(driver, duyuru_base_path, indent_level=1):
+    os.makedirs(duyuru_base_path, exist_ok=True)
+    indent_str = "│   " * indent_level
+    
+    duyurular_info = []
+    try:
+        # Ana duyurular sayfasındaki tüm duyuru kutularını bul
+        duyuru_divleri = driver.find_elements(By.CSS_SELECTOR, "div.duyuruGoruntule")
+        for div in duyuru_divleri:
+            try:
+                a_el = div.find_element(By.CSS_SELECTOR, "h2 a")
+                title = a_el.text.strip()
+                url = a_el.get_attribute("href")
+                
+                # İlk div.tarih duyurunun yayınlanma tarihini tutar
+                tarih_els = div.find_elements(By.CSS_SELECTOR, "div.tarih")
+                date_str = tarih_els[0].text.strip() if tarih_els else "TarihYok"
+                
+                if url:
+                    duyurular_info.append({
+                        "title": title,
+                        "url": url,
+                        "date": date_str
+                    })
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    found_files = []
+    name_counts = {}
+
+    for duyuru in duyurular_info:
+        base_clean_name = temizle_dosya_ismi(duyuru["title"])
+        
+        # Aynı başlığa sahip birden fazla duyuru varsa üzerine yazmamak için numaralandır
+        if base_clean_name in name_counts:
+            name_counts[base_clean_name] += 1
+            filename = f"{base_clean_name}_({name_counts[base_clean_name]}).txt"
+        else:
+            name_counts[base_clean_name] = 1
+            filename = f"{base_clean_name}.txt"
+
+        full_path = os.path.join(duyuru_base_path, filename)
+        rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
+        rapor_yolu = rel_path_key
+        remote_date_str = duyuru["date"]
+
+        dosya_indirilmeli = False
+        durum = ""
+
+        if not os.path.exists(full_path):
+            dosya_indirilmeli = True
+            durum = "YENİ"
+        else:
+            local_stored_date = files_metadata.get(rel_path_key)
+            if local_stored_date != remote_date_str:
+                print(f"{indent_str}{Renk.SARI}[!] DUYURU GÜNCELLENDİ: {filename}{Renk.RESET}")
+                print(f"{indent_str}    Eski: {local_stored_date} -> Yeni: {remote_date_str}")
+                arsivle(full_path, "Changed")
+                dosya_indirilmeli = True
+                durum = "GÜNCEL"
+            else:
+                print(f"{indent_str}{Renk.GRI}[.] Duyuru Güncel: {filename} ({remote_date_str}){Renk.RESET}")
+                found_files.append(filename)
+                continue
+
+        if dosya_indirilmeli:
+            try:
+                if durum == "YENİ":
+                    print(f"{indent_str}{Renk.YESIL}[📢] YENİ DUYURU: {filename}{Renk.RESET}")
+                
+                # Detay sayfasına git ve tam içeriği çek
+                driver.get(duyuru["url"])
+                detay_div = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.duyuruGoruntule"))
+                )
+                
+                icerik_text = ""
+                try:
+                    icerik_el = detay_div.find_element(By.CSS_SELECTOR, "div.icerik")
+                    icerik_text = icerik_el.text.strip()
+                except:
+                    pass
+                
+                yazar_text = ""
+                try:
+                    yazar_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lbKullanici']")
+                    yazar_text = yazar_el.text.strip()
+                except:
+                    pass
+
+                try:
+                    baslangic_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lblBaslangic']")
+                    if baslangic_el.text.strip():
+                        remote_date_str = baslangic_el.text.strip()
+                except:
+                    pass
+
+                # .txt içeriğini oluştur
+                txt_content = f"Başlık : {duyuru['title']}\n"
+                txt_content += f"Tarih  : {remote_date_str}\n"
+                if yazar_text:
+                    txt_content += f"Yazan  : {yazar_text}\n"
+                txt_content += f"Link   : {duyuru['url']}\n"
+                txt_content += "=" * 60 + "\n\n"
+                txt_content += icerik_text + "\n"
+
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(txt_content)
+
+                files_metadata[rel_path_key] = remote_date_str
+                save_metadata()
+
+                if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
+                elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
+
+                found_files.append(filename)
+            except Exception as e:
+                print(f"{indent_str}{Renk.KIRMIZI}[HATA] Duyuru kaydedilemedi ({filename}): {e}{Renk.RESET}")
+                ozet["hata"].append(f"{duyuru_base_path}/{filename}: {e}")
+
+    silinenleri_kontrol_et(duyuru_base_path, found_files, indent_level=indent_level)
 
 def silinenleri_kontrol_et(folder_path, server_files, indent_level):
     if not os.path.exists(folder_path): return
@@ -423,7 +547,7 @@ for ders_adi, ders_link in hedef_dersler:
     print(f"{Renk.KALIN}[{safe_ders_adi}]{Renk.RESET} Senkronize Ediliyor...")
     
     base_path = os.path.join(ANA_KLASOR, safe_ders_adi)
-    moduller = ["/DersDosyalari", "/SinifDosyalari", "/Odevler"]
+    moduller = ["/DersDosyalari", "/SinifDosyalari", "/Odevler", "/Duyurular"]
 
     for mod in moduller:
         driver.get(ders_link.rstrip('/') + mod)
@@ -494,6 +618,12 @@ for ders_adi, ders_link in hedef_dersler:
                     except:
                         # Tablo yoksa ödeve ekli dosya yoktur
                         silinenleri_kontrol_et(hw_folder, [], indent_level=2)
+
+            elif mod == "/Duyurular":
+                # --- DUYURULARI TARA VE .TXT OLARAK KAYDET ---
+                duyuru_base_path = os.path.join(base_path, "Duyurular")
+                print(f"│   {Renk.MAVI}📢 [Duyurular]{Renk.RESET}")
+                duyurulari_tara(driver, duyuru_base_path, indent_level=2)
 
             else:
                 # --- NORMAL DERS VE SINIF DOSYALARINI TARA ---
