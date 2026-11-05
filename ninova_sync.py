@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import hashlib
 import requests
 import re
 import shutil
@@ -111,6 +112,11 @@ def temizle_dosya_ismi(isim):
     yasakli = r'[\\/*?:"<>|]'
     temiz = re.sub(yasakli, '', isim)
     return temiz.strip()
+
+def metin_hash_hesapla(metin):
+    # Satır sonu farklarını (\r\n vs \n) normalize ederek SHA-256 hash üretir
+    normalized = metin.replace("\r\n", "\n").strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 def arsivle(local_path, neden):
     try:
@@ -285,7 +291,6 @@ def duyurulari_tara(driver, duyuru_base_path, indent_level=1):
                 title = a_el.text.strip()
                 url = a_el.get_attribute("href")
                 
-                # İlk div.tarih duyurunun yayınlanma tarihini tutar
                 tarih_els = div.find_elements(By.CSS_SELECTOR, "div.tarih")
                 date_str = tarih_els[0].text.strip() if tarih_els else "TarihYok"
                 
@@ -319,79 +324,95 @@ def duyurulari_tara(driver, duyuru_base_path, indent_level=1):
         rapor_yolu = rel_path_key
         remote_date_str = duyuru["date"]
 
-        dosya_indirilmeli = False
-        durum = ""
-
-        if not os.path.exists(full_path):
-            dosya_indirilmeli = True
-            durum = "YENİ"
-        else:
-            local_stored_date = files_metadata.get(rel_path_key)
-            if local_stored_date != remote_date_str:
-                print(f"{indent_str}{Renk.SARI}[!] DUYURU GÜNCELLENDİ: {filename}{Renk.RESET}")
-                print(f"{indent_str}    Eski: {local_stored_date} -> Yeni: {remote_date_str}")
-                arsivle(full_path, "Changed")
-                dosya_indirilmeli = True
-                durum = "GÜNCEL"
-            else:
-                print(f"{indent_str}{Renk.GRI}[.] Duyuru Güncel: {filename} ({remote_date_str}){Renk.RESET}")
-                found_files.append(filename)
-                continue
-
-        if dosya_indirilmeli:
+        try:
+            # Hoca tarihi değiştirmeden içeriği güncelleyebildiği için
+            # her duyurunun detay sayfasına gidip tam metni çekiyoruz.
+            driver.get(duyuru["url"])
+            detay_div = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.duyuruGoruntule"))
+            )
+            
+            icerik_text = ""
             try:
+                icerik_el = detay_div.find_element(By.CSS_SELECTOR, "div.icerik")
+                icerik_text = icerik_el.text.strip()
+            except:
+                pass
+            
+            yazar_text = ""
+            try:
+                yazar_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lbKullanici']")
+                yazar_text = yazar_el.text.strip()
+            except:
+                pass
+
+            try:
+                baslangic_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lblBaslangic']")
+                if baslangic_el.text.strip():
+                    remote_date_str = baslangic_el.text.strip()
+            except:
+                pass
+
+            # .txt içeriğini oluştur
+            txt_content = f"Başlık : {duyuru['title']}\n"
+            txt_content += f"Tarih  : {remote_date_str}\n"
+            if yazar_text:
+                txt_content += f"Yazan  : {yazar_text}\n"
+            txt_content += f"Link   : {duyuru['url']}\n"
+            txt_content += "=" * 60 + "\n\n"
+            txt_content += icerik_text + "\n"
+
+            remote_hash = metin_hash_hesapla(txt_content)
+
+            dosya_kaydedilmeli = False
+            durum = ""
+
+            if not os.path.exists(full_path):
+                dosya_kaydedilmeli = True
+                durum = "YENİ"
+            else:
+                # 1. Doğrudan lokaldeki dosyanın içeriğini oku ve karşılaştır
+                try:
+                    with open(full_path, "r", encoding="utf-8") as f:
+                        local_content = f.read()
+                    local_hash = metin_hash_hesapla(local_content)
+                except:
+                    local_hash = None
+
+                # İçerik (hash) değişmiş mi kontrol et
+                if local_hash != remote_hash:
+                    print(f"{indent_str}{Renk.SARI}[!] DUYURU İÇERİĞİ GÜNCELLENDİ: {filename}{Renk.RESET}")
+                    arsivle(full_path, "Changed")
+                    dosya_kaydedilmeli = True
+                    durum = "GÜNCEL"
+                else:
+                    print(f"{indent_str}{Renk.GRI}[.] Duyuru Güncel: {filename} ({remote_date_str}){Renk.RESET}")
+                    # Eğer metadata'da eski tarih bazlı kayıt kalmışsa hash ile güncelle
+                    if files_metadata.get(rel_path_key) != remote_hash:
+                        files_metadata[rel_path_key] = remote_hash
+                        save_metadata()
+
+            if dosya_kaydedilmeli:
                 if durum == "YENİ":
                     print(f"{indent_str}{Renk.YESIL}[📢] YENİ DUYURU: {filename}{Renk.RESET}")
-                
-                # Detay sayfasına git ve tam içeriği çek
-                driver.get(duyuru["url"])
-                detay_div = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.duyuruGoruntule"))
-                )
-                
-                icerik_text = ""
-                try:
-                    icerik_el = detay_div.find_element(By.CSS_SELECTOR, "div.icerik")
-                    icerik_text = icerik_el.text.strip()
-                except:
-                    pass
-                
-                yazar_text = ""
-                try:
-                    yazar_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lbKullanici']")
-                    yazar_text = yazar_el.text.strip()
-                except:
-                    pass
-
-                try:
-                    baslangic_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lblBaslangic']")
-                    if baslangic_el.text.strip():
-                        remote_date_str = baslangic_el.text.strip()
-                except:
-                    pass
-
-                # .txt içeriğini oluştur
-                txt_content = f"Başlık : {duyuru['title']}\n"
-                txt_content += f"Tarih  : {remote_date_str}\n"
-                if yazar_text:
-                    txt_content += f"Yazan  : {yazar_text}\n"
-                txt_content += f"Link   : {duyuru['url']}\n"
-                txt_content += "=" * 60 + "\n\n"
-                txt_content += icerik_text + "\n"
 
                 with open(full_path, "w", encoding="utf-8") as f:
                     f.write(txt_content)
 
-                files_metadata[rel_path_key] = remote_date_str
+                files_metadata[rel_path_key] = remote_hash
                 save_metadata()
 
                 if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
                 elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
 
+            found_files.append(filename)
+
+        except Exception as e:
+            print(f"{indent_str}{Renk.KIRMIZI}[HATA] Duyuru kontrol edilemedi/kaydedilemedi ({filename}): {e}{Renk.RESET}")
+            ozet["hata"].append(f"{duyuru_base_path}/{filename}: {e}")
+            # Hata olsa bile lokalde dosya varsa yanlışlıkla silinmiş sanıp arşivlemesin
+            if os.path.exists(full_path):
                 found_files.append(filename)
-            except Exception as e:
-                print(f"{indent_str}{Renk.KIRMIZI}[HATA] Duyuru kaydedilemedi ({filename}): {e}{Renk.RESET}")
-                ozet["hata"].append(f"{duyuru_base_path}/{filename}: {e}")
 
     silinenleri_kontrol_et(duyuru_base_path, found_files, indent_level=indent_level)
 
@@ -648,7 +669,7 @@ else:
         for f in ozet["yeni"]: print(f"  📂 {f}")
 
     if ozet["degisen"]:
-        print(f"\n{Renk.SARI}[!] TARİHİ DEĞİŞEN (GÜNCELLENEN) DOSYALAR / LİNKLER ({len(ozet['degisen'])}):{Renk.RESET}")
+        print(f"\n{Renk.SARI}[!] TARİHİ / İÇERİĞİ DEĞİŞEN DOSYALAR ({len(ozet['degisen'])}):{Renk.RESET}")
         for f in ozet["degisen"]: print(f"  📝 {f}")
 
     if ozet["silinen"]:
