@@ -1,3 +1,4 @@
+# ninova_sync.py
 import hashlib
 import json
 import os
@@ -15,15 +16,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-# Windows terminalinde ANSI renklerini aktif etmek için
 os.system("")
 
 
-# --- RENK KODLARI (ANSI) ---
 class Renk:
     MOR = '\033[95m'
     MAVI = '\033[94m'
-    CYAN = '\033[96m'   # Ana modüller için
+    CYAN = '\033[96m'
     YESIL = '\033[92m'
     SARI = '\033[93m'
     KIRMIZI = '\033[91m'
@@ -32,7 +31,6 @@ class Renk:
     RESET = '\033[0m'
 
 
-# --- AYARLAR ---
 ANA_KLASOR = "ITU_Dersleri"
 ARSIV_KLASOR = os.path.join(ANA_KLASOR, "_ARSIV")
 URL = "https://ninova.itu.edu.tr/tr/"
@@ -42,7 +40,6 @@ SERVICE_NAME = "NinovaAutomation"
 IS_HEADLESS = False
 
 
-# --- SAF YARDIMCI FONKSİYONLAR ---
 def json_yukle(dosya_yolu):
     if os.path.exists(dosya_yolu):
         try:
@@ -94,7 +91,6 @@ def kimlik_bilgilerini_al():
     return username, password
 
 
-# --- ANA SENKRONİZASYON SINIFI ---
 class NinovaSync:
     def __init__(self, username, password, headless=False):
         self.username = username
@@ -103,6 +99,7 @@ class NinovaSync:
         self.driver = None
         self.session = None
         self.metadata = json_yukle(METADATA_FILE)
+        self.taranan_dersler = []
         self.ozet = {
             "yeni": [],
             "degisen": [],
@@ -139,7 +136,6 @@ class NinovaSync:
         elif durum == "GÜNCEL":
             self.ozet["degisen"].append(rapor_yolu)
 
-    # --- TARAYICI VE OTURUM YÖNETİMİ ---
     def tarayici_baslat(self):
         options = Options()
         options.add_argument("--no-sandbox")
@@ -150,6 +146,11 @@ class NinovaSync:
         print(f"{Renk.KALIN}🚀 Chrome başlatılıyor...{Renk.RESET}")
         self.driver = webdriver.Chrome(options=options)
         self.driver.get(URL)
+
+    def tarayici_kapat(self):
+        if self.driver:
+            self.driver.quit()
+            self.driver = None
 
     def giris_yap(self):
         try:
@@ -167,6 +168,8 @@ class NinovaSync:
                 if hata_el.text.strip():
                     print(f"\n{Renk.KIRMIZI}⛔ GİRİŞ BAŞARISIZ! Kullanıcı adı veya şifre hatalı.{Renk.RESET}")
                     sys.exit(1)
+            except SystemExit:
+                raise
             except Exception:
                 pass
 
@@ -175,6 +178,8 @@ class NinovaSync:
             )
             print(f"{Renk.YESIL}✅ Giriş Başarılı!{Renk.RESET}")
 
+        except SystemExit:
+            raise
         except Exception as e:
             print(f"\n{Renk.KIRMIZI}❌ Giriş Hatası: {e}{Renk.RESET}")
             sys.exit(1)
@@ -184,28 +189,29 @@ class NinovaSync:
             self.session.cookies.set(cookie["name"], cookie["value"])
         self.session.headers.update({"User-Agent": self.driver.execute_script("return navigator.userAgent;")})
 
-    def ders_listesini_al(self):
-        print("Ders listesi alınıyor...")
+    def ders_listesini_al(self, sessiz_liste=False):
+        if not sessiz_liste:
+            print("Ders listesi alınıyor...")
         ders_maddeleri = self.driver.find_elements(By.CSS_SELECTOR, ".menuErisimAgaci > ul > li")
         hedef_dersler = []
 
         for madde in ders_maddeleri:
             try:
-                kod = madde.find_element(By.XPATH, "./span").text
+                kod = madde.find_element(By.XPATH, "./span").text.strip()
                 link_el = madde.find_element(By.CSS_SELECTOR, "ul li a")
                 link = link_el.get_attribute("href")
                 if link:
                     hedef_dersler.append((kod, link))
-                    print(f"Listeye eklendi: {kod}")
+                    if not sessiz_liste:
+                        print(f"Listeye eklendi: {kod}")
             except Exception:
                 continue
 
-        print(f"Toplam {len(hedef_dersler)} ders bulundu.\n")
+        if not sessiz_liste:
+            print(f"Toplam {len(hedef_dersler)} ders bulundu.\n")
         return hedef_dersler
 
-    # --- DOSYA VE WEB LİNK SENKRONİZASYONU ---
     def _link_bilgisi_al(self, url):
-        """HEAD isteğiyle hedefin web link mi yoksa indirilebilir dosya mı olduğunu belirler."""
         filename = None
         is_weblink = False
 
@@ -341,7 +347,6 @@ class NinovaSync:
                 self._arsivle(full_path, "Deleted")
                 self.ozet["silinen"].append(rapor_yolu)
 
-    # --- MODÜL TARAYICILARI ---
     def klasor_tarama(self, local_path, indent_level=1):
         os.makedirs(local_path, exist_ok=True)
         indent_str = "│   " * indent_level
@@ -568,9 +573,11 @@ class NinovaSync:
 
         self.silinenleri_kontrol_et(duyuru_base_path, found_files, indent_level=indent_level)
 
-    # --- ANA AKIŞ VE RAPOR ---
     def dersi_senkronize_et(self, ders_adi, ders_link):
         safe_ders_adi = temizle_dosya_ismi(ders_adi)
+        if safe_ders_adi not in self.taranan_dersler:
+            self.taranan_dersler.append(safe_ders_adi)
+
         print(f"{Renk.MOR}════════════════════════════════════════════════════════════{Renk.RESET}")
         print(f"{Renk.KALIN}[{safe_ders_adi}]{Renk.RESET} Senkronize Ediliyor...")
 
@@ -595,6 +602,13 @@ class NinovaSync:
 
     def rapor_yazdir(self):
         print(f"\n\n{Renk.KALIN}████████████████████  SONUÇ RAPORU  ████████████████████{Renk.RESET}")
+
+        if self.taranan_dersler:
+            print(f"\n{Renk.CYAN}[i] KONTROL EDİLEN DERSLER ({len(self.taranan_dersler)}):{Renk.RESET}")
+            for d in self.taranan_dersler:
+                print(f"  📘 {d}")
+        else:
+            print(f"\n{Renk.GRI}[i] KONTROL EDİLEN DERSLER (0){Renk.RESET}")
 
         if not any(self.ozet.values()):
             print(f"\n{Renk.YESIL}✅ Her şey güncel!{Renk.RESET}")
@@ -631,8 +645,7 @@ class NinovaSync:
             for ders_adi, ders_link in self.ders_listesini_al():
                 self.dersi_senkronize_et(ders_adi, ders_link)
         finally:
-            if self.driver:
-                self.driver.quit()
+            self.tarayici_kapat()
 
         self.rapor_yazdir()
 
