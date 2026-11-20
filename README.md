@@ -1,8 +1,8 @@
-# 🎓 İTÜ Ninova Senkronizasyon Aracı
+# İTÜ Ninova Senkronizasyon Aracı
 
 Bu Python aracı, İstanbul Teknik Üniversitesi (İTÜ) Ninova Eğitim Sistemindeki ders içeriklerini, ödev dosyalarını ve duyurularını otomatik olarak bilgisayarınıza indirir ve senkronize eder.
 
-## ✨ Özellikler
+## Özellikler
 
 - **Etkileşimli CLI (`cli.py`):** Otomatik taranan dersler arasından numara seçimi (`1, 3`) veya `hepsi` komutuyla istenen dersleri senkronize etme imkanı sunar.
 - **Etkileşimli Hesap ve Şifre Yönetimi:** Terminal üzerinden şifre güncelleme (`sifre`), kayıtlı hesabı silme (`hesap-sil`), aktif kullanıcıyı görüntüleme (`hesap`) ve `--hesap-sifirla` başlangıç bayrağı sunar.
@@ -16,7 +16,7 @@ Bu Python aracı, İstanbul Teknik Üniversitesi (İTÜ) Ninova Eğitim Sistemin
 - **Hiyerarşik ve Renkli Terminal Çıktısı:** Dersleri ve alt modülleri (`DersDosyalari`, `SinifDosyalari`, `Odevler`, `Duyurular`) ağaç yapısında ve farklı renk hiyerarşisiyle gösterir.
 - **Kapsamlı Özet Rapor:** İşlem sonunda kontrol edilen dersleri ve yeni, değişen, silinen ya da hatalı öğeleri raporlar.
 
-## 🛠️ Gereksinimler
+## Gereksinimler
 
 Programın çalışması için bilgisayarınızda **Python 3.x** ve **Google Chrome** yüklü olmalıdır.
 
@@ -26,7 +26,7 @@ Gerekli kütüphaneleri `requirements.txt` dosyası yardımıyla toplu olarak y�
 pip install -r requirements.txt
 ```
 
-## 🚀 Kurulum ve Kullanım
+## Kurulum ve Kullanım
 
 1. **Dosyaları Hazırlayın:** `ninova_sync.py` ve `cli.py` dosyalarını aynı klasöre koyun.
 2. **Etkileşimli CLI'ı Başlatın:** Terminal açıp şu komutu çalıştırın:
@@ -46,7 +46,7 @@ pip install -r requirements.txt
    - `hesap-sil`: Keyring şifresini ve `config.json` dosyasını siler.
    - `q` (`cikis`): Tarayıcıyı kapatır ve özet raporu gösterir.
 
-## 📂 Klasör ve Takip Yapısı
+## Klasör ve Takip Yapısı
 
 Program çalıştığında aşağıdaki yapıyı otomatik olarak yönetir:
 
@@ -58,13 +58,13 @@ Program çalıştığında aşağıdaki yapıyı otomatik olarak yönetir:
 - `dosya_takip.json`: Dosya tarihlerini ve duyuru içerik hash'lerini tutan takip dosyası.
 - `config.json`: Kayıtlı kullanıcı adını tutan yapılandırma dosyası.
 
-## ⚠️ Önemli Notlar
+## Önemli Notlar
 
 - **Güvenlik:** Şifreler `config.json` yerine işletim sisteminin `keyring` kasasında tutulur; yine de yerel çalışma dizininizi paylaşırken `config.json`, `dosya_takip.json` ve `ITU_Dersleri/` klasörünü `.gitignore` listesine eklemeniz önerilir.
 - **Tarayıcı:** Araç, Selenium üzerinden Chrome tarayıcısını kullanarak Ninova'ya oturum açar ve çerezleri `requests.Session` ile paylaşarak dosya indirmelerini hızlandırır.
 - **Hata Giderme:** Şifrenizi değiştirdiyseniz veya yanlış girdiyseniz giriş sırasındaki kurtarma menüsünden, CLI içindeki `sifre` / `hesap-sil` komutlarından ya da `python cli.py --hesap-sifirla` bayrağından yararlanabilirsiniz.
 
-## 📊 Sonuç Raporu Örneği
+## Sonuç Raporu Örneği
 
 Senkronizasyon bittiğinde terminalde şu şekilde bir özet rapor oluşur:
 
