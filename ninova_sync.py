@@ -19,6 +19,7 @@ from selenium.webdriver.chrome.options import Options
 class Renk:
     MOR = '\033[95m'
     MAVI = '\033[94m'
+    CYAN = '\033[96m'   # <-- Yeni: Ana modüller için
     YESIL = '\033[92m'
     SARI = '\033[93m'
     KIRMIZI = '\033[91m'
@@ -573,14 +574,17 @@ for ders_adi, ders_link in hedef_dersler:
     for mod in moduller:
         driver.get(ders_link.rstrip('/') + mod)
         if "bulunamadı" not in driver.title.lower():
+            mod_adi = mod.replace("/", "")
+
             if mod == "/Odevler":
+                print(f"{Renk.CYAN}{Renk.KALIN}📝 [Odevler]{Renk.RESET}")
+
                 # --- ÖDEVLERİ TARA VE İNDİR ---
                 odev_base_path = os.path.join(base_path, "Odevler")
                 os.makedirs(odev_base_path, exist_ok=True)
                 
                 odevler_info = []
                 try:
-                    # Ana ödev listesinden başlıkları ve linkleri topla
                     rows = driver.find_elements(By.CSS_SELECTOR, "table[id$='gvOdevListesi'] tr td")
                     for td in rows:
                         try:
@@ -604,12 +608,11 @@ for ders_adi, ders_link in hedef_dersler:
                 for odev in odevler_info:
                     hw_folder = os.path.join(odev_base_path, temizle_dosya_ismi(odev["title"]))
                     os.makedirs(hw_folder, exist_ok=True)
-                    print(f"│   {Renk.MAVI}📝 [{odev['title']}]{Renk.RESET}")
+                    print(f"│   {Renk.MAVI}📄 [{odev['title']}]{Renk.RESET}")
                     
                     driver.get(odev["url"])
                     
                     try:
-                        # Ödev sayfasındaki Kaynak Dosyalar tablosunu bul (gvDosyalar)
                         table = WebDriverWait(driver, 3).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, "table[id$='gvDosyalar']"))
                         )
@@ -637,18 +640,16 @@ for ders_adi, ders_link in hedef_dersler:
                                 
                         silinenleri_kontrol_et(hw_folder, found_files, indent_level=2)
                     except:
-                        # Tablo yoksa ödeve ekli dosya yoktur
                         silinenleri_kontrol_et(hw_folder, [], indent_level=2)
 
             elif mod == "/Duyurular":
-                # --- DUYURULARI TARA VE .TXT OLARAK KAYDET ---
                 duyuru_base_path = os.path.join(base_path, "Duyurular")
-                print(f"│   {Renk.MAVI}📢 [Duyurular]{Renk.RESET}")
-                duyurulari_tara(driver, duyuru_base_path, indent_level=2)
+                print(f"{Renk.CYAN}{Renk.KALIN}📢 [Duyurular]{Renk.RESET}")
+                duyurulari_tara(driver, duyuru_base_path, indent_level=1)
 
             else:
-                # --- NORMAL DERS VE SINIF DOSYALARINI TARA ---
-                klasor_tarama(driver, session, os.path.join(base_path, mod.replace("/","")), indent_level=0)
+                print(f"{Renk.CYAN}{Renk.KALIN}📁 [{mod_adi}]{Renk.RESET}")
+                klasor_tarama(driver, session, os.path.join(base_path, mod_adi), indent_level=1)
 
 driver.quit()
 
