@@ -1,25 +1,29 @@
-import os
-import sys
-import time
-import json
 import hashlib
-import requests
+import json
+import os
 import re
 import shutil
-from getpass import getpass
+import sys
 from datetime import datetime
+from getpass import getpass
+
 import keyring
+import requests
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+# Windows terminalinde ANSI renklerini aktif etmek için
+os.system("")
+
 
 # --- RENK KODLARI (ANSI) ---
 class Renk:
     MOR = '\033[95m'
     MAVI = '\033[94m'
-    CYAN = '\033[96m'   # <-- Yeni: Ana modüller için
+    CYAN = '\033[96m'   # Ana modüller için
     YESIL = '\033[92m'
     SARI = '\033[93m'
     KIRMIZI = '\033[91m'
@@ -27,8 +31,6 @@ class Renk:
     KALIN = '\033[1m'
     RESET = '\033[0m'
 
-# Windows terminalinde renkleri aktif etmek için
-os.system("")
 
 # --- AYARLAR ---
 ANA_KLASOR = "ITU_Dersleri"
@@ -37,648 +39,605 @@ URL = "https://ninova.itu.edu.tr/tr/"
 METADATA_FILE = "dosya_takip.json"
 CONFIG_FILE = "config.json"
 SERVICE_NAME = "NinovaAutomation"
-isHeadless = False
+IS_HEADLESS = False
 
-# --- ÖZET RAPOR LİSTELERİ ---
-ozet = {
-    "yeni": [],
-    "degisen": [],
-    "silinen": [],
-    "hata": []
-}
 
-files_metadata = {}
-
-def load_metadata():
-    global files_metadata
-    if os.path.exists(METADATA_FILE):
+# --- SAF YARDIMCI FONKSİYONLAR ---
+def json_yukle(dosya_yolu):
+    if os.path.exists(dosya_yolu):
         try:
-            with open(METADATA_FILE, "r", encoding="utf-8") as f:
-                files_metadata = json.load(f)
-        except:
-            files_metadata = {}
-
-def save_metadata():
-    try:
-        with open(METADATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(files_metadata, f, indent=4, ensure_ascii=False)
-    except Exception as e:
-        print(f"{Renk.KIRMIZI}Metadata kaydedilemedi: {e}{Renk.RESET}")
-
-# --- 1. KİMLİK BİLGİLERİ (KEYRING ENTEGRASYONU) ---
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(dosya_yolu, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except Exception:
             return {}
     return {}
 
-def save_config(data):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
 
-config = load_config()
-my_username = config.get("username")
+def json_kaydet(dosya_yolu, veri):
+    with open(dosya_yolu, "w", encoding="utf-8") as f:
+        json.dump(veri, f, indent=4, ensure_ascii=False)
 
-if not my_username:
-    print(f"{Renk.SARI}--------------------------------------------------{Renk.RESET}")
-    print(f"{Renk.KALIN}🚀 Sisteme ilk defa giriş yapıyorsunuz.{Renk.RESET}")
-    my_username = input(f"{Renk.MAVI}{Renk.KALIN}👉 Kullanıcı Adı: {Renk.RESET}")
-    new_password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
-    
-    # Şifreyi OS Keyring'e kaydet
-    keyring.set_password(SERVICE_NAME, my_username, new_password)
-    
-    # Kullanıcı adını config'e kaydet (Kullanıcı adı gizli bilgi değildir)
-    config["username"] = my_username
-    save_config(config)
-    print(f"\n{Renk.YESIL}✅ Şifreniz işletim sisteminin güvenli kasasına (Keyring) kaydedildi.{Renk.RESET}\n")
-
-# Keyring'den şifreyi güvenli bir şekilde çek
-my_password = keyring.get_password(SERVICE_NAME, my_username)
-
-if not my_password:
-    print(f"{Renk.SARI}[!] Keyring kasasında şifre bulunamadı, lütfen tekrar girin.{Renk.RESET}")
-    my_password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
-    keyring.set_password(SERVICE_NAME, my_username, my_password)
-
-print(f"{Renk.YESIL}Bilgiler yüklendi: {Renk.KALIN}{my_username}{Renk.RESET}")
-
-# --- YARDIMCI FONKSİYONLAR ---
 
 def temizle_dosya_ismi(isim):
-    if not isim: return "isimsiz_dosya"
-    yasakli = r'[\\/*?:"<>|]'
-    temiz = re.sub(yasakli, '', isim)
-    return temiz.strip()
+    if not isim:
+        return "isimsiz_dosya"
+    return re.sub(r'[\\/*?:"<>|]', '', isim).strip()
+
 
 def metin_hash_hesapla(metin):
-    # Satır sonu farklarını (\r\n vs \n) normalize ederek SHA-256 hash üretir
     normalized = metin.replace("\r\n", "\n").strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
-def arsivle(local_path, neden):
-    try:
-        filename = os.path.basename(local_path)
-        name, ext = os.path.splitext(filename)
-        zaman = datetime.now().strftime("%Y%m%d_%H%M%S")
-        yeni_isim = f"{name}_{zaman}{ext}"
-        
-        rel_path = os.path.relpath(local_path, ANA_KLASOR)
-        target_dir = os.path.join(ARSIV_KLASOR, neden, os.path.dirname(rel_path))
-        target_path = os.path.join(target_dir, yeni_isim)
 
-        os.makedirs(target_dir, exist_ok=True)
-        shutil.move(local_path, target_path)
-        return True
-    except Exception as e:
-        return False
+def kimlik_bilgilerini_al():
+    config = json_yukle(CONFIG_FILE)
+    username = config.get("username")
 
-def dosya_senkronize_et(url, session, folder_path, varsayilan_isim, remote_date_str, indent_level):
-    indent_str = "│   " * indent_level
-    filename = None
-    is_weblink = False
-    content_type = ""
-    
-    # 1. Link Kontrolü (HEAD)
-    try:
-        head_resp = session.head(url, allow_redirects=True, timeout=5)
-        
-        if head_resp.status_code >= 400:
-            is_weblink = True
-        else:
-            content_type = head_resp.headers.get('content-type', '').lower()
-            if 'text/html' in content_type:
+    if not username:
+        print(f"{Renk.SARI}--------------------------------------------------{Renk.RESET}")
+        print(f"{Renk.KALIN}🚀 Sisteme ilk defa giriş yapıyorsunuz.{Renk.RESET}")
+        username = input(f"{Renk.MAVI}{Renk.KALIN}👉 Kullanıcı Adı: {Renk.RESET}")
+        password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
+
+        keyring.set_password(SERVICE_NAME, username, password)
+        config["username"] = username
+        json_kaydet(CONFIG_FILE, config)
+        print(f"\n{Renk.YESIL}✅ Şifreniz işletim sisteminin güvenli kasasına (Keyring) kaydedildi.{Renk.RESET}\n")
+    else:
+        password = keyring.get_password(SERVICE_NAME, username)
+        if not password:
+            print(f"{Renk.SARI}[!] Keyring kasasında şifre bulunamadı, lütfen tekrar girin.{Renk.RESET}")
+            password = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 Şifre: {Renk.RESET}")
+            keyring.set_password(SERVICE_NAME, username, password)
+
+    print(f"{Renk.YESIL}Bilgiler yüklendi: {Renk.KALIN}{username}{Renk.RESET}")
+    return username, password
+
+
+# --- ANA SENKRONİZASYON SINIFI ---
+class NinovaSync:
+    def __init__(self, username, password, headless=False):
+        self.username = username
+        self.password = password
+        self.headless = headless
+        self.driver = None
+        self.session = None
+        self.metadata = json_yukle(METADATA_FILE)
+        self.ozet = {
+            "yeni": [],
+            "degisen": [],
+            "silinen": [],
+            "hata": []
+        }
+
+    def _metadata_kaydet(self):
+        try:
+            json_kaydet(METADATA_FILE, self.metadata)
+        except Exception as e:
+            print(f"{Renk.KIRMIZI}Metadata kaydedilemedi: {e}{Renk.RESET}")
+
+    def _arsivle(self, local_path, neden):
+        try:
+            filename = os.path.basename(local_path)
+            name, ext = os.path.splitext(filename)
+            zaman = datetime.now().strftime("%Y%m%d_%H%M%S")
+            yeni_isim = f"{name}_{zaman}{ext}"
+
+            rel_path = os.path.relpath(local_path, ANA_KLASOR)
+            target_dir = os.path.join(ARSIV_KLASOR, neden, os.path.dirname(rel_path))
+            target_path = os.path.join(target_dir, yeni_isim)
+
+            os.makedirs(target_dir, exist_ok=True)
+            shutil.move(local_path, target_path)
+            return True
+        except Exception:
+            return False
+
+    def _ozete_ekle(self, durum, rapor_yolu):
+        if durum == "YENİ":
+            self.ozet["yeni"].append(rapor_yolu)
+        elif durum == "GÜNCEL":
+            self.ozet["degisen"].append(rapor_yolu)
+
+    # --- TARAYICI VE OTURUM YÖNETİMİ ---
+    def tarayici_baslat(self):
+        options = Options()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--log-level=3")
+        if self.headless:
+            options.add_argument("--headless=new")
+
+        print(f"{Renk.KALIN}🚀 Chrome başlatılıyor...{Renk.RESET}")
+        self.driver = webdriver.Chrome(options=options)
+        self.driver.get(URL)
+
+    def giris_yap(self):
+        try:
+            print("Giriş yapılıyor...")
+            wait = WebDriverWait(self.driver, 10)
+            wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "oturumAc"))).click()
+            wait.until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbUserName"))).send_keys(self.username)
+            wait.until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbPassword"))).send_keys(self.password)
+            wait.until(EC.element_to_be_clickable((By.ID, "ContentPlaceHolder1_btnLogin"))).click()
+
+            try:
+                hata_el = WebDriverWait(self.driver, 3).until(
+                    EC.visibility_of_element_located((By.ID, "ContentPlaceHolder1_lbHata"))
+                )
+                if hata_el.text.strip():
+                    print(f"\n{Renk.KIRMIZI}⛔ GİRİŞ BAŞARISIZ! Kullanıcı adı veya şifre hatalı.{Renk.RESET}")
+                    sys.exit(1)
+            except Exception:
+                pass
+
+            WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci"))
+            )
+            print(f"{Renk.YESIL}✅ Giriş Başarılı!{Renk.RESET}")
+
+        except Exception as e:
+            print(f"\n{Renk.KIRMIZI}❌ Giriş Hatası: {e}{Renk.RESET}")
+            sys.exit(1)
+
+        self.session = requests.Session()
+        for cookie in self.driver.get_cookies():
+            self.session.cookies.set(cookie["name"], cookie["value"])
+        self.session.headers.update({"User-Agent": self.driver.execute_script("return navigator.userAgent;")})
+
+    def ders_listesini_al(self):
+        print("Ders listesi alınıyor...")
+        ders_maddeleri = self.driver.find_elements(By.CSS_SELECTOR, ".menuErisimAgaci > ul > li")
+        hedef_dersler = []
+
+        for madde in ders_maddeleri:
+            try:
+                kod = madde.find_element(By.XPATH, "./span").text
+                link_el = madde.find_element(By.CSS_SELECTOR, "ul li a")
+                link = link_el.get_attribute("href")
+                if link:
+                    hedef_dersler.append((kod, link))
+                    print(f"Listeye eklendi: {kod}")
+            except Exception:
+                continue
+
+        print(f"Toplam {len(hedef_dersler)} ders bulundu.\n")
+        return hedef_dersler
+
+    # --- DOSYA VE WEB LİNK SENKRONİZASYONU ---
+    def _link_bilgisi_al(self, url):
+        """HEAD isteğiyle hedefin web link mi yoksa indirilebilir dosya mı olduğunu belirler."""
+        filename = None
+        is_weblink = False
+
+        try:
+            head_resp = self.session.head(url, allow_redirects=True, timeout=5)
+            if head_resp.status_code >= 400:
                 is_weblink = True
             else:
-                cd = head_resp.headers.get('content-disposition')
-                if cd:
-                    fname = re.findall('filename="?([^"]+)"?', cd)
-                    if fname:
-                        try:
-                            filename = fname[0].encode('iso-8859-1').decode('utf-8')
-                        except:
-                            filename = fname[0]
-        
-    except requests.exceptions.RequestException:
-        is_weblink = True
-    except Exception:
-        is_weblink = True
+                content_type = head_resp.headers.get("content-type", "").lower()
+                if "text/html" in content_type:
+                    is_weblink = True
+                else:
+                    cd = head_resp.headers.get("content-disposition")
+                    if cd:
+                        fname = re.findall('filename="?([^"]+)"?', cd)
+                        if fname:
+                            try:
+                                filename = fname[0].encode("iso-8859-1").decode("utf-8")
+                            except Exception:
+                                filename = fname[0]
+        except Exception:
+            is_weblink = True
 
-    # Eğer web bağlantısı ise .url kısayol dosyası olarak kaydet
-    if is_weblink:
+        return is_weblink, filename
+
+    def _weblink_kaydet(self, url, folder_path, varsayilan_isim, remote_date_str, indent_str):
         filename = temizle_dosya_ismi(varsayilan_isim) + ".url"
         full_path = os.path.join(folder_path, filename)
         rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
-        rapor_yolu = rel_path_key
 
         try:
-            dosya_indirilmeli = False
-            durum = ""
-
             if not os.path.exists(full_path):
-                dosya_indirilmeli = True
                 durum = "YENİ"
-            else:
-                local_stored_date = files_metadata.get(rel_path_key)
-                if local_stored_date != remote_date_str:
-                    print(f"{indent_str}{Renk.SARI}[!] WEB LİNK GÜNCELLENDİ: {varsayilan_isim}{Renk.RESET}")
-                    arsivle(full_path, "Changed")
-                    dosya_indirilmeli = True
-                    durum = "GÜNCEL"
-                else:
-                    print(f"{indent_str}{Renk.GRI}[.] Web Link Güncel: {varsayilan_isim} ({remote_date_str}){Renk.RESET}")
-                    return filename
-
-            if dosya_indirilmeli:
-                if durum == "YENİ":
-                    print(f"{indent_str}{Renk.YESIL}[🌐] YENİ WEB LİNK: {varsayilan_isim}{Renk.RESET}")
-                
-                url_icerigi = f"[InternetShortcut]\nURL={url}\n"
-                with open(full_path, 'w', encoding='utf-8') as f:
-                    f.write(url_icerigi)
-                
-                files_metadata[rel_path_key] = remote_date_str
-                save_metadata()
-
-                if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
-                elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
-            
-            return filename
-        except Exception as e:
-            print(f"{indent_str}{Renk.KIRMIZI}[HATA] Web link kaydedilemedi: {e}{Renk.RESET}")
-            ozet["hata"].append(f"{folder_path}/{varsayilan_isim}: {e}")
-            return None
-
-    # Normal dosya indirme mantığı (PDF, PPTX vb.)
-    if not filename:
-        filename = varsayilan_isim
-        if "." not in filename: 
-             filename += ".pdf"
-    
-    filename = temizle_dosya_ismi(filename)
-    full_path = os.path.join(folder_path, filename)
-    rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
-    rapor_yolu = rel_path_key
-
-    try:
-        dosya_indirilmeli = False
-        durum = ""
-
-        if not os.path.exists(full_path):
-            dosya_indirilmeli = True
-            durum = "YENİ"
-        else:
-            local_stored_date = files_metadata.get(rel_path_key)
-            if local_stored_date != remote_date_str:
-                print(f"{indent_str}{Renk.SARI}[!] GÜNCELLEME: {filename}{Renk.RESET}")
-                print(f"{indent_str}    Eski: {local_stored_date} -> Yeni: {remote_date_str}")
-                arsivle(full_path, "Changed")
-                dosya_indirilmeli = True
+                print(f"{indent_str}{Renk.YESIL}[🌐] YENİ WEB LİNK: {varsayilan_isim}{Renk.RESET}")
+            elif self.metadata.get(rel_path_key) != remote_date_str:
                 durum = "GÜNCEL"
+                print(f"{indent_str}{Renk.SARI}[!] WEB LİNK GÜNCELLENDİ: {varsayilan_isim}{Renk.RESET}")
+                self._arsivle(full_path, "Changed")
             else:
-                print(f"{indent_str}{Renk.GRI}[.] Güncel: {filename} ({remote_date_str}){Renk.RESET}")
+                print(f"{indent_str}{Renk.GRI}[.] Web Link Güncel: {varsayilan_isim} ({remote_date_str}){Renk.RESET}")
                 return filename
 
-        if dosya_indirilmeli:
-            if durum == "YENİ":
-                print(f"{indent_str}{Renk.YESIL}[+] İNDİRİLİYOR: {filename}{Renk.RESET}")
-            
-            response = session.get(url, stream=True, timeout=20)
-            if 'text/html' in response.headers.get('content-type', '').lower():
-                # GET isteğinde beklenmedik şekilde HTML gelirse web link olarak kaydet
-                url_icerigi = f"[InternetShortcut]\nURL={url}\n"
-                weblink_filename = temizle_dosya_ismi(varsayilan_isim) + ".url"
-                weblink_full_path = os.path.join(folder_path, weblink_filename)
-                with open(weblink_full_path, 'w', encoding='utf-8') as f:
-                    f.write(url_icerigi)
-                print(f"{indent_str}{Renk.YESIL}[🌐] WEB LİNK OLARAK KAYDEDİLDİ: {varsayilan_isim}{Renk.RESET}")
-                files_metadata[rel_path_key] = remote_date_str
-                save_metadata()
-                if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
-                elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
-                return weblink_filename
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(f"[InternetShortcut]\nURL={url}\n")
 
-            with open(full_path, 'wb') as f:
-                for chunk in response.iter_content(1024):
-                    f.write(chunk)
-            
-            files_metadata[rel_path_key] = remote_date_str
-            save_metadata()
-
-            if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
-            elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
-        
-        return filename
-
-    except Exception as e:
-        print(f"{indent_str}{Renk.KIRMIZI}[HATA] İndirme başarısız: {e}{Renk.RESET}")
-        ozet["hata"].append(f"{folder_path}/{varsayilan_isim}: {e}")
-        return None
-
-def duyurulari_tara(driver, duyuru_base_path, indent_level=1):
-    os.makedirs(duyuru_base_path, exist_ok=True)
-    indent_str = "│   " * indent_level
-    
-    duyurular_info = []
-    try:
-        # Ana duyurular sayfasındaki tüm duyuru kutularını bul
-        duyuru_divleri = driver.find_elements(By.CSS_SELECTOR, "div.duyuruGoruntule")
-        for div in duyuru_divleri:
-            try:
-                a_el = div.find_element(By.CSS_SELECTOR, "h2 a")
-                title = a_el.text.strip()
-                url = a_el.get_attribute("href")
-                
-                tarih_els = div.find_elements(By.CSS_SELECTOR, "div.tarih")
-                date_str = tarih_els[0].text.strip() if tarih_els else "TarihYok"
-                
-                if url:
-                    duyurular_info.append({
-                        "title": title,
-                        "url": url,
-                        "date": date_str
-                    })
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    found_files = []
-    name_counts = {}
-
-    for duyuru in duyurular_info:
-        base_clean_name = temizle_dosya_ismi(duyuru["title"])
-        
-        # Aynı başlığa sahip birden fazla duyuru varsa üzerine yazmamak için numaralandır
-        if base_clean_name in name_counts:
-            name_counts[base_clean_name] += 1
-            filename = f"{base_clean_name}_({name_counts[base_clean_name]}).txt"
-        else:
-            name_counts[base_clean_name] = 1
-            filename = f"{base_clean_name}.txt"
-
-        full_path = os.path.join(duyuru_base_path, filename)
-        rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
-        rapor_yolu = rel_path_key
-        remote_date_str = duyuru["date"]
-
-        try:
-            # Hoca tarihi değiştirmeden içeriği güncelleyebildiği için
-            # her duyurunun detay sayfasına gidip tam metni çekiyoruz.
-            driver.get(duyuru["url"])
-            detay_div = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.duyuruGoruntule"))
-            )
-            
-            icerik_text = ""
-            try:
-                icerik_el = detay_div.find_element(By.CSS_SELECTOR, "div.icerik")
-                icerik_text = icerik_el.text.strip()
-            except:
-                pass
-            
-            yazar_text = ""
-            try:
-                yazar_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lbKullanici']")
-                yazar_text = yazar_el.text.strip()
-            except:
-                pass
-
-            try:
-                baslangic_el = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lblBaslangic']")
-                if baslangic_el.text.strip():
-                    remote_date_str = baslangic_el.text.strip()
-            except:
-                pass
-
-            # .txt içeriğini oluştur
-            txt_content = f"Başlık : {duyuru['title']}\n"
-            txt_content += f"Tarih  : {remote_date_str}\n"
-            if yazar_text:
-                txt_content += f"Yazan  : {yazar_text}\n"
-            txt_content += f"Link   : {duyuru['url']}\n"
-            txt_content += "=" * 60 + "\n\n"
-            txt_content += icerik_text + "\n"
-
-            remote_hash = metin_hash_hesapla(txt_content)
-
-            dosya_kaydedilmeli = False
-            durum = ""
-
-            if not os.path.exists(full_path):
-                dosya_kaydedilmeli = True
-                durum = "YENİ"
-            else:
-                # 1. Doğrudan lokaldeki dosyanın içeriğini oku ve karşılaştır
-                try:
-                    with open(full_path, "r", encoding="utf-8") as f:
-                        local_content = f.read()
-                    local_hash = metin_hash_hesapla(local_content)
-                except:
-                    local_hash = None
-
-                # İçerik (hash) değişmiş mi kontrol et
-                if local_hash != remote_hash:
-                    print(f"{indent_str}{Renk.SARI}[!] DUYURU İÇERİĞİ GÜNCELLENDİ: {filename}{Renk.RESET}")
-                    arsivle(full_path, "Changed")
-                    dosya_kaydedilmeli = True
-                    durum = "GÜNCEL"
-                else:
-                    print(f"{indent_str}{Renk.GRI}[.] Duyuru Güncel: {filename} ({remote_date_str}){Renk.RESET}")
-                    # Eğer metadata'da eski tarih bazlı kayıt kalmışsa hash ile güncelle
-                    if files_metadata.get(rel_path_key) != remote_hash:
-                        files_metadata[rel_path_key] = remote_hash
-                        save_metadata()
-
-            if dosya_kaydedilmeli:
-                if durum == "YENİ":
-                    print(f"{indent_str}{Renk.YESIL}[📢] YENİ DUYURU: {filename}{Renk.RESET}")
-
-                with open(full_path, "w", encoding="utf-8") as f:
-                    f.write(txt_content)
-
-                files_metadata[rel_path_key] = remote_hash
-                save_metadata()
-
-                if durum == "YENİ": ozet["yeni"].append(rapor_yolu)
-                elif durum == "GÜNCEL": ozet["degisen"].append(rapor_yolu)
-
-            found_files.append(filename)
+            self.metadata[rel_path_key] = remote_date_str
+            self._metadata_kaydet()
+            self._ozete_ekle(durum, rel_path_key)
+            return filename
 
         except Exception as e:
-            print(f"{indent_str}{Renk.KIRMIZI}[HATA] Duyuru kontrol edilemedi/kaydedilemedi ({filename}): {e}{Renk.RESET}")
-            ozet["hata"].append(f"{duyuru_base_path}/{filename}: {e}")
-            # Hata olsa bile lokalde dosya varsa yanlışlıkla silinmiş sanıp arşivlemesin
-            if os.path.exists(full_path):
-                found_files.append(filename)
+            print(f"{indent_str}{Renk.KIRMIZI}[HATA] Web link kaydedilemedi: {e}{Renk.RESET}")
+            self.ozet["hata"].append(f"{folder_path}/{varsayilan_isim}: {e}")
+            return None
 
-    silinenleri_kontrol_et(duyuru_base_path, found_files, indent_level=indent_level)
+    def dosya_senkronize_et(self, url, folder_path, varsayilan_isim, remote_date_str, indent_level):
+        indent_str = "│   " * indent_level
+        is_weblink, filename = self._link_bilgisi_al(url)
 
-def silinenleri_kontrol_et(folder_path, server_files, indent_level):
-    if not os.path.exists(folder_path): return
-    indent_str = "│   " * indent_level
+        if is_weblink:
+            return self._weblink_kaydet(url, folder_path, varsayilan_isim, remote_date_str, indent_str)
 
-    local_files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
-    
-    for l_file in local_files:
-        if l_file.startswith("."): continue
-        
-        if l_file not in server_files:
-            print(f"{indent_str}{Renk.KIRMIZI}[-] SİLİNMİŞ: {l_file}{Renk.RESET}")
-            full_path = os.path.join(folder_path, l_file)
-            rapor_yolu = os.path.relpath(full_path, ANA_KLASOR)
-            
-            if rapor_yolu in files_metadata:
-                del files_metadata[rapor_yolu]
-                save_metadata()
+        if not filename:
+            filename = varsayilan_isim
+            if "." not in filename:
+                filename += ".pdf"
 
-            arsivle(full_path, "Deleted")
-            ozet["silinen"].append(rapor_yolu)
-
-def klasor_tarama(driver, session, local_path, indent_level=0):
-    os.makedirs(local_path, exist_ok=True)
-    indent_str = "│   " * indent_level
-    
-    try:
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.data")))
-    except:
-        silinenleri_kontrol_et(local_path, [], indent_level)
-        return
-
-    rows = driver.find_elements(By.CSS_SELECTOR, "table.data tr")
-    items = []
-    found_files = []
-
-    for row in rows:
-        cols = row.find_elements(By.TAG_NAME, "td")
-        if len(cols) < 2: continue 
+        filename = temizle_dosya_ismi(filename)
+        full_path = os.path.join(folder_path, filename)
+        rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
 
         try:
-            img = cols[0].find_element(By.TAG_NAME, "img")
-            img_src = img.get_attribute("src").lower()
-            link_el = cols[0].find_element(By.TAG_NAME, "a")
-            url = link_el.get_attribute("href")
-            name = link_el.text.strip()
-            
-            date_text = "TarihYok"
-            if len(cols) >= 3:
-                candidate_date = cols[-1].text.strip()
-                if not candidate_date and len(cols) > 2:
-                    candidate_date = cols[-2].text.strip()
-                date_text = candidate_date
+            if not os.path.exists(full_path):
+                durum = "YENİ"
+                print(f"{indent_str}{Renk.YESIL}[+] İNDİRİLİYOR: {filename}{Renk.RESET}")
+            else:
+                local_stored_date = self.metadata.get(rel_path_key)
+                if local_stored_date != remote_date_str:
+                    durum = "GÜNCEL"
+                    print(f"{indent_str}{Renk.SARI}[!] GÜNCELLEME: {filename}{Renk.RESET}")
+                    print(f"{indent_str}    Eski: {local_stored_date} -> Yeni: {remote_date_str}")
+                    self._arsivle(full_path, "Changed")
+                else:
+                    print(f"{indent_str}{Renk.GRI}[.] Güncel: {filename} ({remote_date_str}){Renk.RESET}")
+                    return filename
 
-            items.append({
-                "type": "folder" if ("folder" in img_src or "dosya" in img_src) else "file",
-                "url": url,
-                "name": name,
-                "date": date_text
-            })
-        except: 
-            continue
+            response = self.session.get(url, stream=True, timeout=20)
+            if "text/html" in response.headers.get("content-type", "").lower():
+                weblink_filename = temizle_dosya_ismi(varsayilan_isim) + ".url"
+                weblink_full_path = os.path.join(folder_path, weblink_filename)
+                with open(weblink_full_path, "w", encoding="utf-8") as f:
+                    f.write(f"[InternetShortcut]\nURL={url}\n")
+                print(f"{indent_str}{Renk.YESIL}[🌐] WEB LİNK OLARAK KAYDEDİLDİ: {varsayilan_isim}{Renk.RESET}")
+                self.metadata[rel_path_key] = remote_date_str
+                self._metadata_kaydet()
+                self._ozete_ekle(durum, rel_path_key)
+                return weblink_filename
 
-    for item in items:
-        if item["type"] == "folder":
-            print(f"{indent_str}{Renk.MAVI}📂 [{item['name']}]{Renk.RESET}")
-            
-            new_path = os.path.join(local_path, temizle_dosya_ismi(item['name']))
-            driver.get(item["url"])
-            
-            klasor_tarama(driver, session, new_path, indent_level + 1)
-            
-            driver.back()
-        else:
-            saved_name = dosya_senkronize_et(
-                item["url"], 
-                session, 
-                local_path, 
-                item["name"], 
-                item["date"],
-                indent_level 
+            with open(full_path, "wb") as f:
+                for chunk in response.iter_content(1024):
+                    f.write(chunk)
+
+            self.metadata[rel_path_key] = remote_date_str
+            self._metadata_kaydet()
+            self._ozete_ekle(durum, rel_path_key)
+            return filename
+
+        except Exception as e:
+            print(f"{indent_str}{Renk.KIRMIZI}[HATA] İndirme başarısız: {e}{Renk.RESET}")
+            self.ozet["hata"].append(f"{folder_path}/{varsayilan_isim}: {e}")
+            return None
+
+    def silinenleri_kontrol_et(self, folder_path, server_files, indent_level):
+        if not os.path.exists(folder_path):
+            return
+        indent_str = "│   " * indent_level
+
+        local_files = [
+            f for f in os.listdir(folder_path)
+            if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith(".")
+        ]
+
+        for l_file in local_files:
+            if l_file not in server_files:
+                print(f"{indent_str}{Renk.KIRMIZI}[-] SİLİNMİŞ: {l_file}{Renk.RESET}")
+                full_path = os.path.join(folder_path, l_file)
+                rapor_yolu = os.path.relpath(full_path, ANA_KLASOR)
+
+                if rapor_yolu in self.metadata:
+                    del self.metadata[rapor_yolu]
+                    self._metadata_kaydet()
+
+                self._arsivle(full_path, "Deleted")
+                self.ozet["silinen"].append(rapor_yolu)
+
+    # --- MODÜL TARAYICILARI ---
+    def klasor_tarama(self, local_path, indent_level=1):
+        os.makedirs(local_path, exist_ok=True)
+        indent_str = "│   " * indent_level
+
+        try:
+            WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "table.data"))
             )
-            if saved_name: found_files.append(saved_name)
+        except Exception:
+            self.silinenleri_kontrol_et(local_path, [], indent_level)
+            return
 
-    silinenleri_kontrol_et(local_path, found_files, indent_level)
+        rows = self.driver.find_elements(By.CSS_SELECTOR, "table.data tr")
+        items = []
+        found_files = []
 
-# ==============================================================================
-# 🚀 BAŞLATMA
-# ==============================================================================
-load_metadata()
+        for row in rows:
+            cols = row.find_elements(By.TAG_NAME, "td")
+            if len(cols) < 2:
+                continue
 
-options = Options()
-options.add_argument("--no-sandbox")
-options.add_argument('--log-level=3')
-if (isHeadless): options.add_argument("--headless=new")
+            try:
+                img_src = cols[0].find_element(By.TAG_NAME, "img").get_attribute("src").lower()
+                link_el = cols[0].find_element(By.TAG_NAME, "a")
+                url = link_el.get_attribute("href")
+                name = link_el.text.strip()
 
-print(f"{Renk.KALIN}🚀 Chrome başlatılıyor...{Renk.RESET}")
-driver = webdriver.Chrome(options=options)
-driver.get(URL)
+                date_text = "TarihYok"
+                if len(cols) >= 3:
+                    candidate = cols[-1].text.strip()
+                    if not candidate and len(cols) > 2:
+                        candidate = cols[-2].text.strip()
+                    date_text = candidate
 
-# --- OTOMATİK GİRİŞ (LOGIN) ---
-try:
-    print("Giriş yapılıyor...")
-    WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, "oturumAc"))).click()
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbUserName"))).send_keys(my_username)
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbPassword"))).send_keys(my_password)
-    WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "ContentPlaceHolder1_btnLogin"))).click()
+                items.append({
+                    "type": "folder" if ("folder" in img_src or "dosya" in img_src) else "file",
+                    "url": url,
+                    "name": name,
+                    "date": date_text
+                })
+            except Exception:
+                continue
 
-    try:
-        hata_elementi = WebDriverWait(driver, 3).until(EC.visibility_of_element_located((By.ID, "ContentPlaceHolder1_lbHata")))
-        if hata_elementi.text.strip():
-            print(f"\n{Renk.KIRMIZI}⛔ GİRİŞ BAŞARISIZ! Kullanıcı adı veya şifre hatalı.{Renk.RESET}")
-            driver.quit()
-            sys.exit(1)
-    except: pass
+        for item in items:
+            if item["type"] == "folder":
+                print(f"{indent_str}{Renk.MAVI}📂 [{item['name']}]{Renk.RESET}")
+                new_path = os.path.join(local_path, temizle_dosya_ismi(item["name"]))
+                self.driver.get(item["url"])
+                self.klasor_tarama(new_path, indent_level + 1)
+                self.driver.back()
+            else:
+                saved_name = self.dosya_senkronize_et(
+                    item["url"], local_path, item["name"], item["date"], indent_level
+                )
+                if saved_name:
+                    found_files.append(saved_name)
 
-    WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci")))
-    print(f"{Renk.YESIL}✅ Giriş Başarılı!{Renk.RESET}")
+        self.silinenleri_kontrol_et(local_path, found_files, indent_level)
 
-except Exception as e:
-    print(f"\n{Renk.KIRMIZI}❌ Giriş Hatası: {e}{Renk.RESET}")
-    driver.quit()
-    sys.exit(1)
+    def odevleri_tara(self, odev_base_path):
+        os.makedirs(odev_base_path, exist_ok=True)
+        odevler_info = []
 
-session = requests.Session()
-for cookie in driver.get_cookies(): session.cookies.set(cookie['name'], cookie['value'])
-session.headers.update({"User-Agent": driver.execute_script("return navigator.userAgent;")})
-
-# --- DERS LİSTESİ ---
-print("Ders listesi alınıyor...")
-ders_maddeleri = driver.find_elements(By.CSS_SELECTOR, ".menuErisimAgaci > ul > li")
-hedef_dersler = []
-
-for madde in ders_maddeleri:
-    try:
-        kod = madde.find_element(By.XPATH, "./span").text
-        link_el = madde.find_element(By.CSS_SELECTOR, "ul li a")
-        link = link_el.get_attribute("href")
-        donem = link_el.text
-        full_name = kod
-        if link: hedef_dersler.append((full_name, link))
-        print(f"Listeye eklendi: {full_name}")
-    except: continue
-
-print(f"Toplam {len(hedef_dersler)} ders bulundu.\n")
-
-# --- ANA DÖNGÜ ---
-for ders_adi, ders_link in hedef_dersler:
-    safe_ders_adi = temizle_dosya_ismi(ders_adi)
-    print(f"{Renk.MOR}════════════════════════════════════════════════════════════{Renk.RESET}")
-    print(f"{Renk.KALIN}[{safe_ders_adi}]{Renk.RESET} Senkronize Ediliyor...")
-    
-    base_path = os.path.join(ANA_KLASOR, safe_ders_adi)
-    moduller = ["/DersDosyalari", "/SinifDosyalari", "/Odevler", "/Duyurular"]
-
-    for mod in moduller:
-        driver.get(ders_link.rstrip('/') + mod)
-        if "bulunamadı" not in driver.title.lower():
-            mod_adi = mod.replace("/", "")
-
-            if mod == "/Odevler":
-                print(f"{Renk.CYAN}{Renk.KALIN}📝 [Odevler]{Renk.RESET}")
-
-                # --- ÖDEVLERİ TARA VE İNDİR ---
-                odev_base_path = os.path.join(base_path, "Odevler")
-                os.makedirs(odev_base_path, exist_ok=True)
-                
-                odevler_info = []
+        try:
+            rows = self.driver.find_elements(By.CSS_SELECTOR, "table[id$='gvOdevListesi'] tr td")
+            for td in rows:
                 try:
-                    rows = driver.find_elements(By.CSS_SELECTOR, "table[id$='gvOdevListesi'] tr td")
-                    for td in rows:
-                        try:
-                            title_el = td.find_element(By.TAG_NAME, "h2")
-                            title = title_el.text.strip()
-                            
-                            links = td.find_elements(By.TAG_NAME, "a")
-                            link_url = None
-                            for a in links:
-                                href = a.get_attribute("href")
-                                if href and "/Odev/" in href:
-                                    link_url = href
-                                    break
-                            
-                            if link_url:
-                                odevler_info.append({"title": title, "url": link_url})
-                        except: continue
+                    title = td.find_element(By.TAG_NAME, "h2").text.strip()
+                    link_url = next(
+                        (a.get_attribute("href") for a in td.find_elements(By.TAG_NAME, "a")
+                         if a.get_attribute("href") and "/Odev/" in a.get_attribute("href")),
+                        None
+                    )
+                    if link_url:
+                        odevler_info.append({"title": title, "url": link_url})
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        for odev in odevler_info:
+            hw_folder = os.path.join(odev_base_path, temizle_dosya_ismi(odev["title"]))
+            os.makedirs(hw_folder, exist_ok=True)
+            print(f"│   {Renk.MAVI}📄 [{odev['title']}]{Renk.RESET}")
+
+            self.driver.get(odev["url"])
+            found_files = []
+
+            try:
+                table = WebDriverWait(self.driver, 3).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "table[id$='gvDosyalar']"))
+                )
+                for row in table.find_elements(By.CSS_SELECTOR, "tr"):
+                    cols = row.find_elements(By.TAG_NAME, "td")
+                    if len(cols) < 2:
+                        continue
+                    try:
+                        link_el = cols[0].find_element(By.TAG_NAME, "a")
+                        url = link_el.get_attribute("href")
+                        name = link_el.text.strip()
+                        date_text = cols[-1].text.strip() if len(cols) >= 3 else "TarihYok"
+
+                        saved_name = self.dosya_senkronize_et(
+                            url, hw_folder, name, date_text, indent_level=2
+                        )
+                        if saved_name:
+                            found_files.append(saved_name)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            self.silinenleri_kontrol_et(hw_folder, found_files, indent_level=2)
+
+    def duyurulari_tara(self, duyuru_base_path, indent_level=1):
+        os.makedirs(duyuru_base_path, exist_ok=True)
+        indent_str = "│   " * indent_level
+        duyurular_info = []
+
+        try:
+            for div in self.driver.find_elements(By.CSS_SELECTOR, "div.duyuruGoruntule"):
+                try:
+                    a_el = div.find_element(By.CSS_SELECTOR, "h2 a")
+                    title = a_el.text.strip()
+                    url = a_el.get_attribute("href")
+                    tarih_els = div.find_elements(By.CSS_SELECTOR, "div.tarih")
+                    date_str = tarih_els[0].text.strip() if tarih_els else "TarihYok"
+
+                    if url:
+                        duyurular_info.append({"title": title, "url": url, "date": date_str})
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        found_files = []
+        name_counts = {}
+
+        for duyuru in duyurular_info:
+            base_clean_name = temizle_dosya_ismi(duyuru["title"])
+            name_counts[base_clean_name] = name_counts.get(base_clean_name, 0) + 1
+            count = name_counts[base_clean_name]
+            filename = f"{base_clean_name}.txt" if count == 1 else f"{base_clean_name}_({count}).txt"
+
+            full_path = os.path.join(duyuru_base_path, filename)
+            rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
+            remote_date_str = duyuru["date"]
+
+            try:
+                self.driver.get(duyuru["url"])
+                detay_div = WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.duyuruGoruntule"))
+                )
+
+                icerik_text = ""
+                try:
+                    icerik_text = detay_div.find_element(By.CSS_SELECTOR, "div.icerik").text.strip()
                 except Exception:
                     pass
 
-                for odev in odevler_info:
-                    hw_folder = os.path.join(odev_base_path, temizle_dosya_ismi(odev["title"]))
-                    os.makedirs(hw_folder, exist_ok=True)
-                    print(f"│   {Renk.MAVI}📄 [{odev['title']}]{Renk.RESET}")
-                    
-                    driver.get(odev["url"])
-                    
+                yazar_text = ""
+                try:
+                    yazar_text = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lbKullanici']").text.strip()
+                except Exception:
+                    pass
+
+                try:
+                    baslangic_text = detay_div.find_element(By.CSS_SELECTOR, "span[id$='lblBaslangic']").text.strip()
+                    if baslangic_text:
+                        remote_date_str = baslangic_text
+                except Exception:
+                    pass
+
+                txt_content = (
+                    f"Başlık : {duyuru['title']}\n"
+                    f"Tarih  : {remote_date_str}\n"
+                    + (f"Yazan  : {yazar_text}\n" if yazar_text else "")
+                    + f"Link   : {duyuru['url']}\n"
+                    + "=" * 60 + "\n\n"
+                    + icerik_text + "\n"
+                )
+                remote_hash = metin_hash_hesapla(txt_content)
+
+                dosya_kaydedilmeli = False
+                durum = ""
+
+                if not os.path.exists(full_path):
+                    dosya_kaydedilmeli = True
+                    durum = "YENİ"
+                else:
                     try:
-                        table = WebDriverWait(driver, 3).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, "table[id$='gvDosyalar']"))
-                        )
-                        rows = table.find_elements(By.CSS_SELECTOR, "tr")
-                        
-                        found_files = []
-                        for row in rows:
-                            cols = row.find_elements(By.TAG_NAME, "td")
-                            if len(cols) < 2: continue
-                            
-                            try:
-                                link_el = cols[0].find_element(By.TAG_NAME, "a")
-                                url = link_el.get_attribute("href")
-                                name = link_el.text.strip()
-                                
-                                date_text = "TarihYok"
-                                if len(cols) >= 3:
-                                    date_text = cols[-1].text.strip()
-                                    
-                                saved_name = dosya_senkronize_et(
-                                    url, session, hw_folder, name, date_text, indent_level=2
-                                )
-                                if saved_name: found_files.append(saved_name)
-                            except: continue
-                                
-                        silinenleri_kontrol_et(hw_folder, found_files, indent_level=2)
-                    except:
-                        silinenleri_kontrol_et(hw_folder, [], indent_level=2)
+                        with open(full_path, "r", encoding="utf-8") as f:
+                            local_hash = metin_hash_hesapla(f.read())
+                    except Exception:
+                        local_hash = None
 
+                    if local_hash != remote_hash:
+                        print(f"{indent_str}{Renk.SARI}[!] DUYURU İÇERİĞİ GÜNCELLENDİ: {filename}{Renk.RESET}")
+                        self._arsivle(full_path, "Changed")
+                        dosya_kaydedilmeli = True
+                        durum = "GÜNCEL"
+                    else:
+                        print(f"{indent_str}{Renk.GRI}[.] Duyuru Güncel: {filename} ({remote_date_str}){Renk.RESET}")
+                        if self.metadata.get(rel_path_key) != remote_hash:
+                            self.metadata[rel_path_key] = remote_hash
+                            self._metadata_kaydet()
+
+                if dosya_kaydedilmeli:
+                    if durum == "YENİ":
+                        print(f"{indent_str}{Renk.YESIL}[📢] YENİ DUYURU: {filename}{Renk.RESET}")
+                    with open(full_path, "w", encoding="utf-8") as f:
+                        f.write(txt_content)
+                    self.metadata[rel_path_key] = remote_hash
+                    self._metadata_kaydet()
+                    self._ozete_ekle(durum, rel_path_key)
+
+                found_files.append(filename)
+
+            except Exception as e:
+                print(f"{indent_str}{Renk.KIRMIZI}[HATA] Duyuru kontrol edilemedi/kaydedilemedi ({filename}): {e}{Renk.RESET}")
+                self.ozet["hata"].append(f"{duyuru_base_path}/{filename}: {e}")
+                if os.path.exists(full_path):
+                    found_files.append(filename)
+
+        self.silinenleri_kontrol_et(duyuru_base_path, found_files, indent_level=indent_level)
+
+    # --- ANA AKIŞ VE RAPOR ---
+    def dersi_senkronize_et(self, ders_adi, ders_link):
+        safe_ders_adi = temizle_dosya_ismi(ders_adi)
+        print(f"{Renk.MOR}════════════════════════════════════════════════════════════{Renk.RESET}")
+        print(f"{Renk.KALIN}[{safe_ders_adi}]{Renk.RESET} Senkronize Ediliyor...")
+
+        base_path = os.path.join(ANA_KLASOR, safe_ders_adi)
+        moduller = ["/DersDosyalari", "/SinifDosyalari", "/Odevler", "/Duyurular"]
+
+        for mod in moduller:
+            self.driver.get(ders_link.rstrip("/") + mod)
+            if "bulunamadı" in self.driver.title.lower():
+                continue
+
+            mod_adi = mod.replace("/", "")
+            if mod == "/Odevler":
+                print(f"{Renk.CYAN}{Renk.KALIN}📝 [Odevler]{Renk.RESET}")
+                self.odevleri_tara(os.path.join(base_path, "Odevler"))
             elif mod == "/Duyurular":
-                duyuru_base_path = os.path.join(base_path, "Duyurular")
                 print(f"{Renk.CYAN}{Renk.KALIN}📢 [Duyurular]{Renk.RESET}")
-                duyurulari_tara(driver, duyuru_base_path, indent_level=1)
-
+                self.duyurulari_tara(os.path.join(base_path, "Duyurular"), indent_level=1)
             else:
                 print(f"{Renk.CYAN}{Renk.KALIN}📁 [{mod_adi}]{Renk.RESET}")
-                klasor_tarama(driver, session, os.path.join(base_path, mod_adi), indent_level=1)
+                self.klasor_tarama(os.path.join(base_path, mod_adi), indent_level=1)
 
-driver.quit()
+    def rapor_yazdir(self):
+        print(f"\n\n{Renk.KALIN}████████████████████  SONUÇ RAPORU  ████████████████████{Renk.RESET}")
 
-# ==============================================================================
-# 📊 SONUÇ RAPORU
-# ==============================================================================
-print(f"\n\n{Renk.KALIN}████████████████████  SONUÇ RAPORU  ████████████████████{Renk.RESET}")
+        if not any(self.ozet.values()):
+            print(f"\n{Renk.YESIL}✅ Her şey güncel!{Renk.RESET}")
+        else:
+            for key in ("yeni", "degisen", "silinen"):
+                self.ozet[key].sort()
 
-if not (ozet["yeni"] or ozet["degisen"] or ozet["silinen"] or ozet["hata"]):
-    print(f"\n{Renk.YESIL}✅ Her şey güncel!{Renk.RESET}")
-else:
-    ozet["yeni"].sort()
-    ozet["degisen"].sort()
-    ozet["silinen"].sort()
+            if self.ozet["yeni"]:
+                print(f"\n{Renk.YESIL}[+] YENİ EKLENEN DOSYALAR / LİNKLER ({len(self.ozet['yeni'])}):{Renk.RESET}")
+                for f in self.ozet["yeni"]:
+                    print(f"  📂 {f}")
 
-    if ozet["yeni"]:
-        print(f"\n{Renk.YESIL}[+] YENİ EKLENEN DOSYALAR / LİNKLER ({len(ozet['yeni'])}):{Renk.RESET}")
-        for f in ozet["yeni"]: print(f"  📂 {f}")
+            if self.ozet["degisen"]:
+                print(f"\n{Renk.SARI}[!] TARİHİ / İÇERİĞİ DEĞİŞEN DOSYALAR ({len(self.ozet['degisen'])}):{Renk.RESET}")
+                for f in self.ozet["degisen"]:
+                    print(f"  📝 {f}")
 
-    if ozet["degisen"]:
-        print(f"\n{Renk.SARI}[!] TARİHİ / İÇERİĞİ DEĞİŞEN DOSYALAR ({len(ozet['degisen'])}):{Renk.RESET}")
-        for f in ozet["degisen"]: print(f"  📝 {f}")
+            if self.ozet["silinen"]:
+                print(f"\n{Renk.KIRMIZI}[-] SİLİNEN DOSYALAR / LİNKLER ({len(self.ozet['silinen'])}):{Renk.RESET}")
+                for f in self.ozet["silinen"]:
+                    print(f"  🗑️  {f}")
 
-    if ozet["silinen"]:
-        print(f"\n{Renk.KIRMIZI}[-] SİLİNEN DOSYALAR / LİNKLER ({len(ozet['silinen'])}):{Renk.RESET}")
-        for f in ozet["silinen"]: print(f"  🗑️  {f}")
-        
-    if ozet["hata"]:
-        print(f"\n{Renk.KIRMIZI}[X] HATALAR ({len(ozet['hata'])}):{Renk.RESET}")
-        for f in ozet["hata"]: print(f"  ❌ {f}")
+            if self.ozet["hata"]:
+                print(f"\n{Renk.KIRMIZI}[X] HATALAR ({len(self.ozet['hata'])}):{Renk.RESET}")
+                for f in self.ozet["hata"]:
+                    print(f"  ❌ {f}")
 
-print(f"\n{Renk.KALIN}İşlem Tamamlandı.{Renk.RESET}")
+        print(f"\n{Renk.KALIN}İşlem Tamamlandı.{Renk.RESET}")
+
+    def calistir(self):
+        try:
+            self.tarayici_baslat()
+            self.giris_yap()
+            for ders_adi, ders_link in self.ders_listesini_al():
+                self.dersi_senkronize_et(ders_adi, ders_link)
+        finally:
+            if self.driver:
+                self.driver.quit()
+
+        self.rapor_yazdir()
+
+
+if __name__ == "__main__":
+    kullanici_adi, sifre = kimlik_bilgilerini_al()
+    bot = NinovaSync(kullanici_adi, sifre, headless=IS_HEADLESS)
+    bot.calistir()
