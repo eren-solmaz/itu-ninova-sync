@@ -91,6 +91,50 @@ def kimlik_bilgilerini_al():
     return username, password
 
 
+def kimlik_bilgilerini_sil():
+    """Keyring üzerindeki şifreyi ve config.json dosyasındaki kullanıcı adını temizler."""
+    config = json_yukle(CONFIG_FILE)
+    username = config.get("username")
+
+    if username:
+        try:
+            keyring.delete_password(SERVICE_NAME, username)
+        except keyring.errors.PasswordDeleteError:
+            pass
+        except Exception as e:
+            print(f"{Renk.SARI}[!] Keyring silme uyarısı: {e}{Renk.RESET}")
+
+    if os.path.exists(CONFIG_FILE):
+        try:
+            os.remove(CONFIG_FILE)
+        except Exception as e:
+            print(f"{Renk.KIRMIZI}[!] {CONFIG_FILE} silinemedi: {e}{Renk.RESET}")
+
+    if username:
+        print(f"{Renk.YESIL}🗑️  '{username}' hesabına ait yerel ve Keyring kayıtları silindi.{Renk.RESET}")
+    else:
+        print(f"{Renk.GRI}[i] Kayıtlı bir kullanıcı bulunamadı.{Renk.RESET}")
+
+
+def sifre_guncelle():
+    """Mevcut kullanıcı için Keyring üzerindeki şifreyi günceller."""
+    config = json_yukle(CONFIG_FILE)
+    username = config.get("username")
+
+    if not username:
+        print(f"{Renk.KIRMIZI}[!] Kayıtlı kullanıcı bulunamadı. Önce yeni giriş oluşturun.{Renk.RESET}")
+        return None
+
+    yeni_sifre = getpass(f"{Renk.MAVI}{Renk.KALIN}👉 '{username}' için yeni şifre: {Renk.RESET}")
+    if not yeni_sifre:
+        print(f"{Renk.SARI}[!] Boş şifre girildi, işlem iptal edildi.{Renk.RESET}")
+        return None
+
+    keyring.set_password(SERVICE_NAME, username, yeni_sifre)
+    print(f"{Renk.YESIL}✅ '{username}' için Keyring şifresi güncellendi.{Renk.RESET}")
+    return yeni_sifre
+
+
 class NinovaSync:
     def __init__(self, username, password, headless=False):
         self.username = username
@@ -153,41 +197,87 @@ class NinovaSync:
             self.driver = None
 
     def giris_yap(self):
-        try:
-            print("Giriş yapılıyor...")
-            wait = WebDriverWait(self.driver, 10)
-            wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "oturumAc"))).click()
-            wait.until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbUserName"))).send_keys(self.username)
-            wait.until(EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbPassword"))).send_keys(self.password)
-            wait.until(EC.element_to_be_clickable((By.ID, "ContentPlaceHolder1_btnLogin"))).click()
-
+        while True:
             try:
-                hata_el = WebDriverWait(self.driver, 3).until(
-                    EC.visibility_of_element_located((By.ID, "ContentPlaceHolder1_lbHata"))
+                print("Giriş yapılıyor...")
+                if "ninova.itu.edu.tr" not in self.driver.current_url:
+                    self.driver.get(URL)
+
+                # Zaten giriş formundaysak tekrar oturumAc'a tıklamaya çalışma
+                if not self.driver.find_elements(By.ID, "ContentPlaceHolder1_tbUserName"):
+                    WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.CLASS_NAME, "oturumAc"))
+                    ).click()
+
+                user_input = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbUserName"))
                 )
-                if hata_el.text.strip():
-                    print(f"\n{Renk.KIRMIZI}⛔ GİRİŞ BAŞARISIZ! Kullanıcı adı veya şifre hatalı.{Renk.RESET}")
-                    sys.exit(1)
+                pass_input = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_tbPassword"))
+                )
+
+                user_input.clear()
+                user_input.send_keys(self.username)
+                pass_input.clear()
+                pass_input.send_keys(self.password)
+
+                WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.ID, "ContentPlaceHolder1_btnLogin"))
+                ).click()
+
+                try:
+                    hata_el = WebDriverWait(self.driver, 3).until(
+                        EC.visibility_of_element_located((By.ID, "ContentPlaceHolder1_lbHata"))
+                    )
+                    if hata_el.text.strip():
+                        print(f"\n{Renk.KIRMIZI}⛔ GİRİŞ BAŞARISIZ! Kullanıcı adı veya şifre hatalı.{Renk.RESET}")
+                        if not self._hatali_giris_coz():
+                            sys.exit(1)
+                        continue
+                except SystemExit:
+                    raise
+                except Exception:
+                    pass
+
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci"))
+                )
+                print(f"{Renk.YESIL}✅ Giriş Başarılı!{Renk.RESET}")
+                break
+
             except SystemExit:
                 raise
-            except Exception:
-                pass
-
-            WebDriverWait(self.driver, 15).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "menuErisimAgaci"))
-            )
-            print(f"{Renk.YESIL}✅ Giriş Başarılı!{Renk.RESET}")
-
-        except SystemExit:
-            raise
-        except Exception as e:
-            print(f"\n{Renk.KIRMIZI}❌ Giriş Hatası: {e}{Renk.RESET}")
-            sys.exit(1)
+            except Exception as e:
+                print(f"\n{Renk.KIRMIZI}❌ Giriş Hatası: {e}{Renk.RESET}")
+                sys.exit(1)
 
         self.session = requests.Session()
         for cookie in self.driver.get_cookies():
             self.session.cookies.set(cookie["name"], cookie["value"])
         self.session.headers.update({"User-Agent": self.driver.execute_script("return navigator.userAgent;")})
+
+    def _hatali_giris_coz(self):
+        """Giriş başarısız olduğunda kullanıcıya şifre güncelleme veya hesabı sıfırlama seçeneği sunar."""
+        print(f"\n{Renk.SARI}Ne yapmak istersiniz?{Renk.RESET}")
+        print(f"  {Renk.CYAN}1.{Renk.RESET} '{Renk.KALIN}{self.username}{Renk.RESET}' için yeni şifre gir ve tekrar dene")
+        print(f"  {Renk.CYAN}2.{Renk.RESET} Kayıtlı hesabı sil (kullanıcı adı + şifre) ve baştan gir")
+        print(f"  {Renk.CYAN}3.{Renk.RESET} Çıkış yap")
+
+        while True:
+            secim = input(f"{Renk.MAVI}{Renk.KALIN}Seçiminiz (1/2/3): {Renk.RESET}").strip()
+            if secim == "1":
+                yeni_sifre = sifre_guncelle()
+                if yeni_sifre:
+                    self.password = yeni_sifre
+                    return True
+            elif secim == "2":
+                kimlik_bilgilerini_sil()
+                self.username, self.password = kimlik_bilgilerini_al()
+                return True
+            elif secim in {"3", "q", "exit", "cikis"}:
+                return False
+            else:
+                print(f"{Renk.KIRMIZI}[!] Lütfen 1, 2 veya 3 girin.{Renk.RESET}")
 
     def ders_listesini_al(self, sessiz_liste=False):
         if not sessiz_liste:

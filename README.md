@@ -1,55 +1,92 @@
 # 🎓 İTÜ Ninova Senkronizasyon Aracı
 
-Bu Python aracı, İstanbul Teknik Üniversitesi (İTÜ) Ninova Eğitim Sistemindeki ders içeriklerini otomatik olarak bilgisayarınıza indirir ve senkronize eder.
+Bu Python aracı, İstanbul Teknik Üniversitesi (İTÜ) Ninova Eğitim Sistemindeki ders içeriklerini, ödev dosyalarını ve duyurularını otomatik olarak bilgisayarınıza indirir ve senkronize eder.
 
 ## ✨ Özellikler
 
-* Akıllı Senkronizasyon: Sadece yeni eklenen veya sunucuda boyutu değişen dosyaları indirir.
-* Gelişmiş Arşivleme:     * Sunucuda güncellenen dosyaların eski hallerini _ARSIV/Changed klasörüne taşır.
-    * Ninova'dan silinen dosyaları yerelinizden kaldırmaz, _ARSIV/Deleted klasörüne yedekler.
-* Otomatik Kimlik Yönetimi: İlk çalıştırmada bilgilerinizi ister ve credentials.json olarak güvenli bir şekilde kaydeder.
-* Hiyerarşik Düzen: Dosyaları Ders Adı/DersDosyalari ve Ders Adı/SinifDosyalari şeklinde organize eder.
-* Renkli Özet Rapor: İşlem bittiğinde terminal üzerinden yeni, değişen ve silinen dosyaların profesyonel bir raporunu sunar.
+- **Etkileşimli CLI (`cli.py`):** Otomatik taranan dersler arasından numara seçimi (`1, 3`) veya `hepsi` komutuyla istenen dersleri senkronize etme imkanı sunar.
+- **Etkileşimli Hesap ve Şifre Yönetimi:** Terminal üzerinden şifre güncelleme (`sifre`), kayıtlı hesabı silme (`hesap-sil`), aktif kullanıcıyı görüntüleme (`hesap`) ve `--hesap-sifirla` başlangıç bayrağı sunar.
+- **Hatalı Giriş Kurtarma:** Şifre veya kullanıcı adı yanlış girildiğinde programı kapatmadan doğrudan terminal üzerinden şifre yenileme veya hesabı sıfırlayıp yeniden deneme seçeneği sunar.
+- **Akıllı Senkronizasyon ve Web Link Desteği:** Dosyalarda tarih/metadata kontrolü, duyurularda SHA-256 içerik hash karşılaştırması yapar; HTML/web bağlantılarını `.url` kısayolu olarak kaydeder.
+- **Duyuru ve Ödev Taraması:** Duyuruları `.txt` dosyaları halinde kaydeder (aynı başlıktaki duyuruları numaralandırır) ve ödev eklerini ödev başlığına göre klasörler.
+- **Gelişmiş Arşivleme:**
+  - Sunucuda güncellenen dosya, link veya duyuruların eski hallerini `ITU_Dersleri/_ARSIV/Changed` klasörüne taşır.
+  - Ninova'dan kaldırılan öğeleri yerelinizden silmez, `ITU_Dersleri/_ARSIV/Deleted` klasörüne yedekler.
+- **Güvenli Kimlik Yönetimi (`keyring`):** Kullanıcı adını `config.json` dosyasına kaydeder, şifreyi ise işletim sisteminin güvenli kasasına (`keyring`) saklar.
+- **Hiyerarşik ve Renkli Terminal Çıktısı:** Dersleri ve alt modülleri (`DersDosyalari`, `SinifDosyalari`, `Odevler`, `Duyurular`) ağaç yapısında ve farklı renk hiyerarşisiyle gösterir.
+- **Kapsamlı Özet Rapor:** İşlem sonunda kontrol edilen dersleri ve yeni, değişen, silinen ya da hatalı öğeleri raporlar.
 
 ## 🛠️ Gereksinimler
 
-Programın çalışması için bilgisayarınızda Python 3.x ve Google Chrome yüklü olmalıdır.
+Programın çalışması için bilgisayarınızda **Python 3.x** ve **Google Chrome** yüklü olmalıdır.
 
-Gerekli kütüphaneleri requirements.txt dosyası yardımıyla toplu olarak yüklemek için:
+Gerekli kütüphaneleri `requirements.txt` dosyası yardımıyla toplu olarak yüklemek için:
 
-pip install -r requirements.txt 
+```bash
+pip install -r requirements.txt
+```
 
 ## 🚀 Kurulum ve Kullanım
 
-1. Script'i İndirin: ninova_sync.py dosyasını bir klasöre koyun.
-2. Programı Çalıştırın: Terminal veya Komut İstemi açıp şu komutu girin:
-  python ninova_sync.py    
-3. Giriş Yapın: İlk çalıştırmada İTÜ kullanıcı adınızı ve şifrenizi girmeniz istenecektir. Şifreniz yazarken ekranda görünmez (güvenlik önlemi).
+1. **Dosyaları Hazırlayın:** `ninova_sync.py` ve `cli.py` dosyalarını aynı klasöre koyun.
+2. **Etkileşimli CLI'ı Başlatın:** Terminal açıp şu komutu çalıştırın:
+   ```bash
+   python cli.py
+   ```
+   **İsteğe Bağlı Başlangıç Bayrakları:**
+   - `python cli.py --headless`: Tarayıcı penceresini gizli (arka planda) çalıştırır.
+   - `python cli.py --hesap-sifirla`: Kayıtlı `keyring` şifresini ve `config.json` dosyasını silip yeniden giriş ister.
+3. **Giriş Yapın:** İlk çalıştırmada İTÜ kullanıcı adınızı ve şifrenizi girmeniz istenecektir. Şifreniz `getpass` ile gizli alınır ve sistem `keyring` kasasına kaydedilir.
+4. **Komutları Kullanın (`ninova >`):**
+   - `1, 3` veya `1 3`: Seçilen numaradaki dersleri senkronize eder.
+   - `hepsi` (`a`, `*`): Tüm dersleri senkronize eder.
+   - `liste`: Ders listesini tekrar gösterir.
+   - `hesap`: Aktif kullanıcı bilgilerini gösterir.
+   - `sifre`: Keyring'deki şifreyi günceller ve oturumu yeniden başlatır.
+   - `hesap-sil`: Keyring şifresini ve `config.json` dosyasını siler.
+   - `q` (`cikis`): Tarayıcıyı kapatır ve özet raporu gösterir.
 
-## 📂 Klasör Yapısı
+## 📂 Klasör ve Takip Yapısı
 
 Program çalıştığında aşağıdaki yapıyı otomatik olarak yönetir:
 
-* ITU_Dersleri/: Tüm ders içeriklerinin ana dizini.
-* ITU_Dersleri/[Ders Adı]/: Her ders için ayrılmış alt klasörler.
-* ITU_Dersleri/_ARSIV/:
-    * /Changed/: İçeriği güncellenen eski dosyalar.
-    * /Deleted/: Ninova sisteminden kaldırılmış dosyalar.
+- `ITU_Dersleri/`: Tüm ders içeriklerinin ana dizini.
+- `ITU_Dersleri/[Ders Kodu]/`: `DersDosyalari`, `SinifDosyalari`, `Odevler` ve `Duyurular` alt klasörleri.
+- `ITU_Dersleri/_ARSIV/`:
+  - `Changed/`: İçeriği veya tarihi güncellenen eski dosyalar ve duyurular.
+  - `Deleted/`: Ninova sisteminden kaldırılmış dosyalar ve duyurular.
+- `dosya_takip.json`: Dosya tarihlerini ve duyuru içerik hash'lerini tutan takip dosyası.
+- `config.json`: Kayıtlı kullanıcı adını tutan yapılandırma dosyası.
 
 ## ⚠️ Önemli Notlar
 
-* Güvenlik: credentials.json dosyanız şifrenizi açık metin olarak saklar. Bu dosyayı başkalarıyla paylaşmayın ve GitHub gibi platformlara yüklerken .gitignore listesine ekleyin.
-* Tarayıcı: Araç, Chrome tarayıcısını kullanarak Ninova'ya giriş yapar. İşlem sırasında Chrome pencereleri açılabilir.
-* Hata Giderme: Eğer giriş hatası alırsanız veya bilgileriniz değişirse, credentials.json dosyasını silip programı yeniden başlatmanız yeterlidir.
+- **Güvenlik:** Şifreler `config.json` yerine işletim sisteminin `keyring` kasasında tutulur; yine de yerel çalışma dizininizi paylaşırken `config.json`, `dosya_takip.json` ve `ITU_Dersleri/` klasörünü `.gitignore` listesine eklemeniz önerilir.
+- **Tarayıcı:** Araç, Selenium üzerinden Chrome tarayıcısını kullanarak Ninova'ya oturum açar ve çerezleri `requests.Session` ile paylaşarak dosya indirmelerini hızlandırır.
+- **Hata Giderme:** Şifrenizi değiştirdiyseniz veya yanlış girdiyseniz giriş sırasındaki kurtarma menüsünden, CLI içindeki `sifre` / `hesap-sil` komutlarından ya da `python cli.py --hesap-sifirla` bayrağından yararlanabilirsiniz.
 
 ## 📊 Sonuç Raporu Örneği
 
-Senkronizasyon bittiğinde terminalde şu şekilde bir görsel rapor oluşur:
+Senkronizasyon bittiğinde terminalde şu şekilde bir özet rapor oluşur:
 
-████████████████████  SONUÇ RAPORU  ████████████████████  
-[+] YENİ EKLENEN DOSYALAR (2):   📂 MAT103E - Calculus I/DersDosyalari/Lecture_Notes_01.pdf  
-[!] DEĞİŞEN DOSYALAR (1):   📝 FIZ101E - Physics I/SinifDosyalari/Experiment_Guide.pdf  
-[-] SİLİNEN DOSYALAR (1):   🗑️ Old_Syllabus_2023.pdf  İşlem Tamamlandı.  
+```text
+████████████████████  SONUÇ RAPORU  ████████████████████
+
+[i] KONTROL EDİLEN DERSLER (2):
+  📘 BLG 231E
+  📘 EKO 201E
+
+[+] YENİ EKLENEN DOSYALAR / LİNKLER (2):
+  📂 BLG 231E/DersDosyalari/Hafta_01/Logic_Gates.pdf
+  🌐 EKO 201E/DersDosyalari/Reading_Link.url
+
+[!] TARİHİ / İÇERİĞİ DEĞİŞEN DOSYALAR (1):
+  📝 BLG 231E/Duyurular/Sinav_Tarihi.txt
+
+[-] SİLİNEN DOSYALAR / LİNKLER (1):
+  🗑️  EKO 201E/SinifDosyalari/Eski_Not.pdf
+
+İşlem Tamamlandı.
+```
 
 ---
-Bu araç tamamen eğitim amaçlı geliştirilmiştir. İTÜ Ninova sisteminin kullanım koşullarına uygun şekilde kullanılması kullanıcının sorumluluğundadır.
+Bu araç eğitim ve kişisel organizasyon amacıyla geliştirilmiştir. İTÜ Ninova sisteminin kullanım koşullarına uygun şekilde kullanılması kullanıcının sorumluluğundadır.
