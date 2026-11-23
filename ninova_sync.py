@@ -505,7 +505,7 @@ class NinovaSync:
         """Ödev detay sayfasındaki teslim tarihlerini ve ödev açıklamasını .txt olarak senkronize eder."""
         indent_str = "│   " * indent_level
         ders_kodu = os.path.relpath(hw_folder, ANA_KLASOR).split(os.sep)[0]
-        filename = f"{ders_kodu}_{temizle_dosya_ismi(odev['title'])}_Aciklama.txt"
+        filename = f"{ders_kodu}_{temizle_dosya_ismi(odev['title'])[:30].rstrip(' .')}_Aciklama.txt"
         full_path = os.path.join(hw_folder, filename)
         rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
 
