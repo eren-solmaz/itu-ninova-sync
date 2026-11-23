@@ -1,4 +1,3 @@
-# ninova_sync.py
 import hashlib
 import json
 import os
@@ -31,6 +30,7 @@ class Renk:
     RESET = '\033[0m'
 
 
+# --- AYARLAR ---
 ANA_KLASOR = "ITU_Dersleri"
 ARSIV_KLASOR = os.path.join(ANA_KLASOR, "_ARSIV")
 URL = "https://ninova.itu.edu.tr/tr/"
@@ -40,6 +40,7 @@ SERVICE_NAME = "NinovaAutomation"
 IS_HEADLESS = False
 
 
+# --- SAF YARDIMCI FONKSİYONLAR ---
 def json_yukle(dosya_yolu):
     if os.path.exists(dosya_yolu):
         try:
@@ -135,6 +136,7 @@ def sifre_guncelle():
     return yeni_sifre
 
 
+# --- ANA SENKRONİZASYON SINIFI ---
 class NinovaSync:
     def __init__(self, username, password, headless=False):
         self.username = username
@@ -180,6 +182,7 @@ class NinovaSync:
         elif durum == "GÜNCEL":
             self.ozet["degisen"].append(rapor_yolu)
 
+    # --- TARAYICI VE OTURUM YÖNETİMİ ---
     def tarayici_baslat(self):
         options = Options()
         options.add_argument("--no-sandbox")
@@ -301,6 +304,7 @@ class NinovaSync:
             print(f"Toplam {len(hedef_dersler)} ders bulundu.\n")
         return hedef_dersler
 
+    # --- DOSYA VE WEB LİNK SENKRONİZASYONU ---
     def _link_bilgisi_al(self, url):
         filename = None
         is_weblink = False
@@ -437,6 +441,7 @@ class NinovaSync:
                 self._arsivle(full_path, "Deleted")
                 self.ozet["silinen"].append(rapor_yolu)
 
+    # --- MODÜL TARAYICILARI ---
     def klasor_tarama(self, local_path, indent_level=1):
         os.makedirs(local_path, exist_ok=True)
         indent_str = "│   " * indent_level
@@ -496,6 +501,95 @@ class NinovaSync:
 
         self.silinenleri_kontrol_et(local_path, found_files, indent_level)
 
+    def _odev_aciklamasi_senkronize_et(self, odev, hw_folder, indent_level=2):
+        """Ödev detay sayfasındaki teslim tarihlerini ve ödev açıklamasını .txt olarak senkronize eder."""
+        indent_str = "│   " * indent_level
+        ders_kodu = os.path.relpath(hw_folder, ANA_KLASOR).split(os.sep)[0]
+        filename = f"{ders_kodu}_{temizle_dosya_ismi(odev['title'])}_Aciklama.txt"
+        full_path = os.path.join(hw_folder, filename)
+        rel_path_key = os.path.relpath(full_path, ANA_KLASOR)
+
+        try:
+            form2 = WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.form2"))
+            )
+
+            teslim_baslangici = ""
+            teslim_bitisi = ""
+
+            for td in form2.find_elements(By.CSS_SELECTOR, "table td"):
+                try:
+                    baslik = td.find_element(By.CSS_SELECTOR, "span.title_field").text.strip().lower()
+                    deger = td.find_element(By.CSS_SELECTOR, "span.data_field").text.strip()
+                    if "başlang" in baslik or "baslang" in baslik:
+                        teslim_baslangici = deger
+                    elif "bitiş" in baslik or "bitis" in baslik:
+                        teslim_bitisi = deger
+                except Exception:
+                    continue
+
+            aciklama_text = ""
+            try:
+                aciklama_els = form2.find_elements(By.XPATH, "./span[contains(@class, 'data_field')]")
+                if aciklama_els:
+                    aciklama_text = aciklama_els[0].text.strip()
+            except Exception:
+                pass
+
+            if not (teslim_baslangici or teslim_bitisi or aciklama_text):
+                return None
+
+            txt_content = f"Ödev             : {odev['title']}\n"
+            if teslim_baslangici:
+                txt_content += f"Teslim Başlangıcı: {teslim_baslangici}\n"
+            if teslim_bitisi:
+                txt_content += f"Teslim Bitişi    : {teslim_bitisi}\n"
+            txt_content += f"Link             : {odev['url']}\n"
+            txt_content += "=" * 60 + "\n\n"
+            txt_content += (aciklama_text if aciklama_text else "(Açıklama girilmemiş)") + "\n"
+
+            remote_hash = metin_hash_hesapla(txt_content)
+
+            dosya_kaydedilmeli = False
+            durum = ""
+
+            if not os.path.exists(full_path):
+                dosya_kaydedilmeli = True
+                durum = "YENİ"
+            else:
+                try:
+                    with open(full_path, "r", encoding="utf-8") as f:
+                        local_hash = metin_hash_hesapla(f.read())
+                except Exception:
+                    local_hash = None
+
+                if local_hash != remote_hash:
+                    print(f"{indent_str}{Renk.SARI}[!] ÖDEV AÇIKLAMASI GÜNCELLENDİ: {filename}{Renk.RESET}")
+                    self._arsivle(full_path, "Changed")
+                    dosya_kaydedilmeli = True
+                    durum = "GÜNCEL"
+                else:
+                    print(f"{indent_str}{Renk.GRI}[.] Ödev Açıklaması Güncel: {filename}{Renk.RESET}")
+                    if self.metadata.get(rel_path_key) != remote_hash:
+                        self.metadata[rel_path_key] = remote_hash
+                        self._metadata_kaydet()
+
+            if dosya_kaydedilmeli:
+                if durum == "YENİ":
+                    print(f"{indent_str}{Renk.YESIL}[📝] YENİ ÖDEV AÇIKLAMASI: {filename}{Renk.RESET}")
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(txt_content)
+                self.metadata[rel_path_key] = remote_hash
+                self._metadata_kaydet()
+                self._ozete_ekle(durum, rel_path_key)
+
+            return filename
+
+        except Exception as e:
+            print(f"{indent_str}{Renk.KIRMIZI}[HATA] Ödev açıklaması kaydedilemedi ({filename}): {e}{Renk.RESET}")
+            self.ozet["hata"].append(f"{hw_folder}/{filename}: {e}")
+            return filename if os.path.exists(full_path) else None
+
     def odevleri_tara(self, odev_base_path):
         os.makedirs(odev_base_path, exist_ok=True)
         odevler_info = []
@@ -525,6 +619,12 @@ class NinovaSync:
             self.driver.get(odev["url"])
             found_files = []
 
+            # Ödev teslim tarihleri ve açıklaması .txt olarak senkronize edilir
+            aciklama_dosyasi = self._odev_aciklamasi_senkronize_et(odev, hw_folder, indent_level=2)
+            if aciklama_dosyasi:
+                found_files.append(aciklama_dosyasi)
+
+            # Ödeve ekli kaynak dosyalar senkronize edilir
             try:
                 table = WebDriverWait(self.driver, 3).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "table[id$='gvDosyalar']"))
@@ -663,6 +763,7 @@ class NinovaSync:
 
         self.silinenleri_kontrol_et(duyuru_base_path, found_files, indent_level=indent_level)
 
+    # --- ANA AKIŞ VE RAPOR ---
     def dersi_senkronize_et(self, ders_adi, ders_link):
         safe_ders_adi = temizle_dosya_ismi(ders_adi)
         if safe_ders_adi not in self.taranan_dersler:
